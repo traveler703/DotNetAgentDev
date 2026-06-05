@@ -1,0 +1,13 @@
+# 环境变量（含 API Key，切勿提交）
+.env
+
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# IDE
+.idea/
+.DS_Store
