@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="基于 .NET 10 与 DeepSeek 的多 Agent 旅游规划系统">
+    <title>旅序 · 多 Agent 旅游规划</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+</head>
+<body>
+<div class="ambient ambient-one"></div>
+<div class="ambient ambient-two"></div>
+
+<header class="site-header">
+    <a class="brand" href="/" aria-label="旅序首页">
+        <span class="brand-mark">旅</span>
+        <span>
+            <strong>旅序</strong>
+            <small>TRAVEL ORCHESTRATOR</small>
+        </span>
+    </a>
+    <div class="header-actions">
+        <div id="modeBadge" class="mode-badge is-loading">
+            <span class="status-dot"></span>
+            <span>正在检测 Agent...</span>
+        </div>
+        <button id="historyButton" class="ghost-button" type="button">
+            <span>历史方案</span>
+            <span id="historyCount" class="count-badge">0</span>
+        </button>
+    </div>
+</header>
+
+<main>
+    <section class="hero">
+        <div class="hero-copy">
+            <p class="eyebrow">MULTI-AGENT TRAVEL STUDIO</p>
+            <h1>把复杂的旅行约束，<br><em>交给一支 Agent 团队。</em></h1>
+            <p class="hero-description">
+                主控 Agent 协同行程、酒店、交通、预算与风险专家，
+                基于工具数据生成可解释、可调整的旅行方案。
+            </p>
+            <div class="hero-stats" aria-label="系统能力">
+                <div><strong>6</strong><span>协作 Agent</span></div>
+                <div><strong>8</strong><span>自定义工具</span></div>
+                <div><strong>ReAct</strong><span>推理循环</span></div>
+            </div>
+        </div>
+
+        <form id="planningForm" class="planning-card">
+            <div class="card-heading">
+                <div>
+                    <span class="step-label">01 / 描述旅程</span>
+                    <h2>从哪里出发，想去哪里？</h2>
+                </div>
+                <button id="exampleButton" class="text-button" type="button">填入示例</button>
+            </div>
+
+            <input id="userId" name="userId" type="hidden" value="demo-user">
+
+            <div class="route-row">
+                <label class="field">
+                    <span>出发地</span>
+                    <input id="departure" name="departure" required placeholder="例如：上海" autocomplete="off">
+                </label>
+                <div class="route-arrow" aria-hidden="true">→</div>
+                <label class="field">
+                    <span>目的地</span>
+                    <input id="destination" name="destination" required placeholder="例如：日本" autocomplete="off">
+                </label>
+            </div>
+
+            <div class="grid-fields">
+                <label class="field">
+                    <span>出发日期</span>
+                    <input id="startDate" name="startDate" type="date">
+                </label>
+                <label class="field">
+                    <span>旅行天数</span>
+                    <span class="input-suffix">
+                        <input id="days" name="days" type="number" value="7" min="1" max="30" required>
+                        <b>天</b>
+                    </span>
+                </label>
+                <label class="field">
+                    <span>出行人数</span>
+                    <span class="input-suffix">
+                        <input id="travelers" name="travelers" type="number" value="1" min="1" max="20" required>
+                        <b>人</b>
+                    </span>
+                </label>
+                <label class="field">
+                    <span>总预算</span>
+                    <span class="input-prefix">
+                        <b>¥</b>
+                        <input id="budget" name="budget" type="number" value="12000" min="100" step="100" required>
+                    </span>
+                </label>
+            </div>
+
+            <fieldset class="pace-field">
+                <legend>旅行节奏</legend>
+                <div class="segmented">
+                    <label>
+                        <input type="radio" name="pace" value="relaxed" checked>
+                        <span><b>轻松</b><small>每天 2 个核心活动</small></span>
+                    </label>
+                    <label>
+                        <input type="radio" name="pace" value="balanced">
+                        <span><b>均衡</b><small>体验与休息兼顾</small></span>
+                    </label>
+                    <label>
+                        <input type="radio" name="pace" value="intensive">
+                        <span><b>充实</b><small>尽可能多地探索</small></span>
+                    </label>
+                </div>
+            </fieldset>
+
+            <label class="field">
+                <span>偏好</span>
+                <input id="preferences" name="preferences" placeholder="例如：美食、城市漫步、人文、夜景">
+            </label>
+
+            <label class="field">
+                <span>备注与约束</span>
+                <textarea id="notes" name="notes" rows="2" placeholder="例如：不想太赶，避免早起，希望酒店靠近地铁"></textarea>
+            </label>
+
+            <div id="formError" class="form-error" role="alert" hidden></div>
+
+            <button id="submitButton" class="primary-button" type="submit">
+                <span class="button-label">启动 Agent 团队</span>
+                <span class="button-icon">↗</span>
+            </button>
+            <p class="form-footnote">价格、天气与政策信息用于课程演示，真实出行前请再次核验。</p>
+        </form>
+    </section>
+
+    <section id="workspace" class="workspace" hidden>
+        <div class="section-heading">
+            <div>
+                <p class="eyebrow">YOUR TRAVEL BLUEPRINT</p>
+                <h2 id="planTitle">旅行方案</h2>
+            </div>
+            <div id="planMeta" class="plan-meta"></div>
+        </div>
+
+        <div class="result-shell">
+            <nav id="resultTabs" class="result-tabs" aria-label="方案内容">
+                <button class="active" data-tab="overview">方案总览</button>
+                <button data-tab="itinerary">每日行程</button>
+                <button data-tab="budget">预算交通</button>
+                <button data-tab="risks">风险提醒</button>
+                <button data-tab="trace">Agent 轨迹</button>
+            </nav>
+            <div id="resultContent" class="result-content"></div>
+        </div>
+    </section>
+</main>
+
+<aside id="historyDrawer" class="history-drawer" aria-hidden="true">
+    <div class="drawer-header">
+        <div>
+            <span class="step-label">LONG-TERM MEMORY</span>
+            <h2>历史旅行方案</h2>
+        </div>
+        <button id="closeHistory" class="icon-button" type="button" aria-label="关闭">×</button>
+    </div>
+    <div id="memoryProfile" class="memory-profile"></div>
+    <div id="historyList" class="history-list"></div>
+</aside>
+<div id="drawerBackdrop" class="drawer-backdrop" hidden></div>
+
+<div id="planningOverlay" class="planning-overlay" hidden>
+    <div class="planning-progress">
+        <div class="orbital-loader">
+            <span></span><span></span><span></span>
+            <b>AI</b>
+        </div>
+        <p class="eyebrow">AGENTS AT WORK</p>
+        <h2 id="progressTitle">主控 Agent 正在拆解任务</h2>
+        <p id="progressDetail">接下来将协调行程、酒店、交通、预算与风险专家。</p>
+        <div class="progress-agents">
+            <span>行程</span><span>酒店</span><span>交通</span><span>预算</span><span>风险</span>
+        </div>
+    </div>
+</div>
+
+<template id="emptyHistoryTemplate">
+    <div class="empty-state">
+        <span>◇</span>
+        <h3>还没有历史方案</h3>
+        <p>完成第一次规划后，长期记忆会记录你的偏好与预算习惯。</p>
+    </div>
+</template>
+</body>
+</html>

@@ -1,0 +1,505 @@
+{
+  "destinations": [
+    {
+      "country": "日本",
+      "city": "东京",
+      "aliases": ["Tokyo", "东京市", "关东"],
+      "foodPerDay": 320,
+      "localTransportPerDay": 85,
+      "visaNote": "中国大陆普通护照赴日通常需提前申请相应签证，请以日本驻华使领馆最新要求为准。",
+      "safetyNote": "整体治安较好，注意末班车时间、地震避险指引和热门区域财物安全。",
+      "seasonalWeather": {
+        "spring": "8-20°C，早晚温差明显，樱花季人流密集。",
+        "summer": "23-33°C，湿热且可能有台风，建议防晒补水。",
+        "autumn": "14-25°C，较舒适，红叶季热门景点拥挤。",
+        "winter": "2-12°C，天气干冷，室内外温差较大。"
+      },
+      "attractions": [
+        {
+          "name": "浅草寺与仲见世",
+          "category": "人文",
+          "area": "浅草",
+          "description": "东京代表性寺院与传统商店街，适合体验下町氛围和小吃。",
+          "ticketPrice": 0,
+          "durationMinutes": 150,
+          "tags": ["人文", "美食", "摄影", "轻松"]
+        },
+        {
+          "name": "东京晴空塔",
+          "category": "城市景观",
+          "area": "墨田",
+          "description": "高空观景与大型商场组合，可安排在浅草之后。",
+          "ticketPrice": 120,
+          "durationMinutes": 120,
+          "tags": ["夜景", "购物", "亲子"]
+        },
+        {
+          "name": "明治神宫与原宿",
+          "category": "人文",
+          "area": "涩谷",
+          "description": "森林参道、神社文化与原宿街区形成动静结合的半日路线。",
+          "ticketPrice": 0,
+          "durationMinutes": 180,
+          "tags": ["人文", "购物", "轻松"]
+        },
+        {
+          "name": "涩谷十字路口与展望台",
+          "category": "城市景观",
+          "area": "涩谷",
+          "description": "感受东京城市节奏，傍晚登高观景体验更佳。",
+          "ticketPrice": 105,
+          "durationMinutes": 150,
+          "tags": ["夜景", "摄影", "潮流"]
+        },
+        {
+          "name": "筑地场外市场",
+          "category": "美食",
+          "area": "中央区",
+          "description": "适合早餐或午餐时段体验寿司、海鲜与玉子烧。",
+          "ticketPrice": 0,
+          "durationMinutes": 120,
+          "tags": ["美食", "市场", "轻松"]
+        },
+        {
+          "name": "上野公园与东京国立博物馆",
+          "category": "博物馆",
+          "area": "上野",
+          "description": "公园散步与日本历史艺术展陈相结合，雨天也适合。",
+          "ticketPrice": 55,
+          "durationMinutes": 210,
+          "tags": ["博物馆", "人文", "亲子"]
+        }
+      ],
+      "hotels": [
+        {
+          "name": "浅草城市酒店",
+          "area": "浅草",
+          "pricePerNight": 620,
+          "level": "舒适型",
+          "reason": "靠近地铁与浅草景点，生活便利，价格相对稳定。",
+          "score": 8.7
+        },
+        {
+          "name": "上野站前酒店",
+          "area": "上野",
+          "pricePerNight": 760,
+          "level": "舒适型",
+          "reason": "机场与新干线衔接方便，适合首次到访。",
+          "score": 9.0
+        },
+        {
+          "name": "新宿精品酒店",
+          "area": "新宿",
+          "pricePerNight": 980,
+          "level": "高档型",
+          "reason": "交通网络密集，夜间餐饮丰富，适合重视便利度的旅客。",
+          "score": 8.9
+        }
+      ]
+    },
+    {
+      "country": "日本",
+      "city": "京都",
+      "aliases": ["Kyoto", "关西", "京都市"],
+      "foodPerDay": 290,
+      "localTransportPerDay": 70,
+      "visaNote": "签证要求与日本其他城市一致，出行前请核验签证有效期和停留期限。",
+      "safetyNote": "热门寺社台阶较多，雨天石板路湿滑；居民区游览需保持安静。",
+      "seasonalWeather": {
+        "spring": "7-21°C，樱花季昼夜温差大且客流高。",
+        "summer": "24-35°C，盆地闷热，午后应减少长距离步行。",
+        "autumn": "12-25°C，红叶季住宿紧张，建议提前预订。",
+        "winter": "1-11°C，体感湿冷，部分山区可能积雪。"
+      },
+      "attractions": [
+        {
+          "name": "伏见稻荷大社",
+          "category": "人文",
+          "area": "伏见",
+          "description": "以千本鸟居闻名，建议清晨前往避开人流。",
+          "ticketPrice": 0,
+          "durationMinutes": 180,
+          "tags": ["人文", "徒步", "摄影"]
+        },
+        {
+          "name": "清水寺与二年坂",
+          "category": "人文",
+          "area": "东山",
+          "description": "经典寺院、传统街巷与伴手礼店组成的京都代表路线。",
+          "ticketPrice": 25,
+          "durationMinutes": 240,
+          "tags": ["人文", "摄影", "美食"]
+        },
+        {
+          "name": "祇园与花见小路",
+          "category": "街区",
+          "area": "祇园",
+          "description": "傍晚漫步传统街区，适合与东山景点连线。",
+          "ticketPrice": 0,
+          "durationMinutes": 120,
+          "tags": ["人文", "摄影", "轻松"]
+        },
+        {
+          "name": "岚山竹林与渡月桥",
+          "category": "自然",
+          "area": "岚山",
+          "description": "竹林、河景与寺院集中，适合安排半日至一日。",
+          "ticketPrice": 35,
+          "durationMinutes": 270,
+          "tags": ["自然", "摄影", "轻松"]
+        },
+        {
+          "name": "锦市场",
+          "category": "美食",
+          "area": "中京",
+          "description": "集中体验京都渍物、甜点与家常料理。",
+          "ticketPrice": 0,
+          "durationMinutes": 120,
+          "tags": ["美食", "市场", "购物"]
+        }
+      ],
+      "hotels": [
+        {
+          "name": "京都站南口酒店",
+          "area": "京都站",
+          "pricePerNight": 650,
+          "level": "舒适型",
+          "reason": "城际交通便利，适合大阪、奈良联游。",
+          "score": 8.8
+        },
+        {
+          "name": "四条乌丸町屋旅店",
+          "area": "四条乌丸",
+          "pricePerNight": 820,
+          "level": "特色型",
+          "reason": "餐饮与公交选择丰富，兼顾传统体验和交通便利。",
+          "score": 9.1
+        },
+        {
+          "name": "祇园庭院旅馆",
+          "area": "祇园",
+          "pricePerNight": 1280,
+          "level": "高档型",
+          "reason": "传统氛围突出，步行可达东山核心景点。",
+          "score": 9.2
+        }
+      ]
+    },
+    {
+      "country": "日本",
+      "city": "大阪",
+      "aliases": ["Osaka", "关西", "大阪市"],
+      "foodPerDay": 280,
+      "localTransportPerDay": 75,
+      "visaNote": "请提前确认日本签证、入境申报及护照有效期要求。",
+      "safetyNote": "夜间繁华区人流复杂，注意保管随身物品；乘车高峰避免携带大件行李。",
+      "seasonalWeather": {
+        "spring": "9-21°C，天气温和，热门景区人流较多。",
+        "summer": "24-34°C，湿热多雨，注意补水与防晒。",
+        "autumn": "14-26°C，适合城市漫步。",
+        "winter": "3-12°C，风较明显，建议分层穿衣。"
+      },
+      "attractions": [
+        {
+          "name": "大阪城公园",
+          "category": "人文",
+          "area": "中央区",
+          "description": "城市历史地标与大型公园，可根据体力选择是否登天守阁。",
+          "ticketPrice": 35,
+          "durationMinutes": 180,
+          "tags": ["人文", "公园", "摄影"]
+        },
+        {
+          "name": "道顿堀与心斋桥",
+          "category": "美食",
+          "area": "难波",
+          "description": "大阪代表性美食和购物区域，适合傍晚至夜间。",
+          "ticketPrice": 0,
+          "durationMinutes": 210,
+          "tags": ["美食", "购物", "夜景"]
+        },
+        {
+          "name": "大阪海游馆",
+          "category": "亲子",
+          "area": "港区",
+          "description": "大型水族馆，室内参观舒适，适合亲子和雨天。",
+          "ticketPrice": 135,
+          "durationMinutes": 210,
+          "tags": ["亲子", "室内", "轻松"]
+        },
+        {
+          "name": "新世界与通天阁",
+          "category": "街区",
+          "area": "浪速区",
+          "description": "复古街区与大阪平民美食集中地。",
+          "ticketPrice": 55,
+          "durationMinutes": 150,
+          "tags": ["美食", "街区", "摄影"]
+        }
+      ],
+      "hotels": [
+        {
+          "name": "难波站前酒店",
+          "area": "难波",
+          "pricePerNight": 610,
+          "level": "舒适型",
+          "reason": "餐饮购物方便，机场与市内交通衔接较好。",
+          "score": 8.8
+        },
+        {
+          "name": "本町商务酒店",
+          "area": "本町",
+          "pricePerNight": 520,
+          "level": "经济型",
+          "reason": "位于南北线路中段，预算友好且相对安静。",
+          "score": 8.5
+        },
+        {
+          "name": "梅田景观酒店",
+          "area": "梅田",
+          "pricePerNight": 920,
+          "level": "高档型",
+          "reason": "适合跨城移动，周边商业成熟。",
+          "score": 9.0
+        }
+      ]
+    },
+    {
+      "country": "中国",
+      "city": "杭州",
+      "aliases": ["Hangzhou", "西湖", "杭州市"],
+      "foodPerDay": 180,
+      "localTransportPerDay": 45,
+      "visaNote": "中国大陆居民境内出行无需签证，入住和乘车请携带有效身份证件。",
+      "safetyNote": "节假日西湖周边拥堵，骑行需遵守非机动车规则，山区雨天注意路滑。",
+      "seasonalWeather": {
+        "spring": "10-23°C，多阵雨，适合备轻便雨具。",
+        "summer": "25-36°C，炎热潮湿，午后减少暴晒。",
+        "autumn": "15-27°C，天气舒适，桂花季客流较高。",
+        "winter": "2-11°C，湿冷，湖边风大。"
+      },
+      "attractions": [
+        {
+          "name": "西湖环湖漫步",
+          "category": "自然",
+          "area": "西湖",
+          "description": "串联断桥、白堤、孤山，可步行与观光车结合。",
+          "ticketPrice": 0,
+          "durationMinutes": 240,
+          "tags": ["自然", "轻松", "摄影"]
+        },
+        {
+          "name": "灵隐寺与飞来峰",
+          "category": "人文",
+          "area": "灵隐",
+          "description": "佛教文化与山林环境结合，建议上午前往。",
+          "ticketPrice": 75,
+          "durationMinutes": 210,
+          "tags": ["人文", "自然", "徒步"]
+        },
+        {
+          "name": "中国茶叶博物馆",
+          "category": "博物馆",
+          "area": "龙井",
+          "description": "了解中国茶文化，可与龙井村短途漫步组合。",
+          "ticketPrice": 0,
+          "durationMinutes": 150,
+          "tags": ["博物馆", "茶文化", "轻松"]
+        },
+        {
+          "name": "河坊街与南宋御街",
+          "category": "美食",
+          "area": "上城",
+          "description": "传统街区、小吃与老字号集中，适合傍晚游览。",
+          "ticketPrice": 0,
+          "durationMinutes": 150,
+          "tags": ["美食", "街区", "购物"]
+        }
+      ],
+      "hotels": [
+        {
+          "name": "湖滨步行街酒店",
+          "area": "湖滨",
+          "pricePerNight": 520,
+          "level": "舒适型",
+          "reason": "步行可达西湖，地铁和餐饮便利。",
+          "score": 8.9
+        },
+        {
+          "name": "武林广场酒店",
+          "area": "武林",
+          "pricePerNight": 430,
+          "level": "经济型",
+          "reason": "交通方便，兼顾预算与城市活动。",
+          "score": 8.5
+        },
+        {
+          "name": "西湖山景度假酒店",
+          "area": "西湖景区",
+          "pricePerNight": 980,
+          "level": "高档型",
+          "reason": "环境安静，适合慢节奏和度假需求。",
+          "score": 9.2
+        }
+      ]
+    },
+    {
+      "country": "中国",
+      "city": "成都",
+      "aliases": ["Chengdu", "蓉城", "成都市"],
+      "foodPerDay": 170,
+      "localTransportPerDay": 40,
+      "visaNote": "中国大陆居民境内出行无需签证，请携带有效身份证件。",
+      "safetyNote": "川菜较辛辣，肠胃敏感者注意饮食；热门景点建议提前预约。",
+      "seasonalWeather": {
+        "spring": "11-23°C，多阴雨，体感湿润。",
+        "summer": "23-33°C，闷热多雨。",
+        "autumn": "15-25°C，较舒适但日照偏少。",
+        "winter": "4-11°C，湿冷且多阴天。"
+      },
+      "attractions": [
+        {
+          "name": "成都大熊猫繁育研究基地",
+          "category": "亲子",
+          "area": "成华",
+          "description": "建议开园时到达，上午大熊猫活动更活跃。",
+          "ticketPrice": 55,
+          "durationMinutes": 240,
+          "tags": ["亲子", "自然", "摄影"]
+        },
+        {
+          "name": "武侯祠与锦里",
+          "category": "人文",
+          "area": "武侯",
+          "description": "三国文化与传统商业街组合，适合半日。",
+          "ticketPrice": 50,
+          "durationMinutes": 210,
+          "tags": ["人文", "美食", "街区"]
+        },
+        {
+          "name": "人民公园与鹤鸣茶社",
+          "category": "休闲",
+          "area": "青羊",
+          "description": "体验成都慢生活，喝茶、散步并观察本地日常。",
+          "ticketPrice": 35,
+          "durationMinutes": 150,
+          "tags": ["轻松", "茶文化", "本地生活"]
+        },
+        {
+          "name": "宽窄巷子",
+          "category": "街区",
+          "area": "青羊",
+          "description": "历史街区与餐饮集中，可作为傍晚散步点。",
+          "ticketPrice": 0,
+          "durationMinutes": 120,
+          "tags": ["美食", "街区", "购物"]
+        }
+      ],
+      "hotels": [
+        {
+          "name": "春熙路城市酒店",
+          "area": "春熙路",
+          "pricePerNight": 450,
+          "level": "舒适型",
+          "reason": "餐饮和地铁便利，适合首次到访。",
+          "score": 8.8
+        },
+        {
+          "name": "文殊院精品客栈",
+          "area": "文殊院",
+          "pricePerNight": 360,
+          "level": "特色型",
+          "reason": "环境相对安静，周边本地餐饮丰富。",
+          "score": 8.7
+        },
+        {
+          "name": "太古里设计酒店",
+          "area": "太古里",
+          "pricePerNight": 880,
+          "level": "高档型",
+          "reason": "位置核心，适合重视设计与便利度的旅客。",
+          "score": 9.1
+        }
+      ]
+    },
+    {
+      "country": "新加坡",
+      "city": "新加坡",
+      "aliases": ["Singapore", "狮城"],
+      "foodPerDay": 260,
+      "localTransportPerDay": 55,
+      "visaNote": "中国大陆普通护照通常需提前办理新加坡签证，并按要求完成入境申报。",
+      "safetyNote": "治安良好但法规严格，注意禁烟区域、公共交通饮食规定和药品入境限制。",
+      "seasonalWeather": {
+        "spring": "25-32°C，湿热且有阵雨。",
+        "summer": "26-33°C，日照强，午后常有雷阵雨。",
+        "autumn": "25-32°C，湿度较高。",
+        "winter": "24-31°C，降雨相对频繁。"
+      },
+      "attractions": [
+        {
+          "name": "滨海湾花园",
+          "category": "城市景观",
+          "area": "滨海湾",
+          "description": "温室、擎天树与夜间灯光秀集中，适合下午至晚上。",
+          "ticketPrice": 165,
+          "durationMinutes": 240,
+          "tags": ["夜景", "自然", "亲子"]
+        },
+        {
+          "name": "鱼尾狮公园与滨海湾步道",
+          "category": "城市景观",
+          "area": "滨海湾",
+          "description": "经典城市天际线步行路线，免费且交通便利。",
+          "ticketPrice": 0,
+          "durationMinutes": 120,
+          "tags": ["摄影", "轻松", "夜景"]
+        },
+        {
+          "name": "牛车水与麦士威熟食中心",
+          "category": "美食",
+          "area": "牛车水",
+          "description": "文化街区与平价本地美食组合。",
+          "ticketPrice": 0,
+          "durationMinutes": 180,
+          "tags": ["美食", "人文", "街区"]
+        },
+        {
+          "name": "新加坡国家博物馆",
+          "category": "博物馆",
+          "area": "市中心",
+          "description": "系统了解新加坡历史，适合作为雨天安排。",
+          "ticketPrice": 80,
+          "durationMinutes": 150,
+          "tags": ["博物馆", "人文", "室内"]
+        }
+      ],
+      "hotels": [
+        {
+          "name": "劳明达城市酒店",
+          "area": "劳明达",
+          "pricePerNight": 720,
+          "level": "经济型",
+          "reason": "地铁便利，价格低于滨海湾核心区。",
+          "score": 8.4
+        },
+        {
+          "name": "武吉士精品酒店",
+          "area": "武吉士",
+          "pricePerNight": 920,
+          "level": "舒适型",
+          "reason": "周边餐饮丰富，前往主要景点方便。",
+          "score": 8.8
+        },
+        {
+          "name": "滨海湾景观酒店",
+          "area": "滨海湾",
+          "pricePerNight": 1680,
+          "level": "高档型",
+          "reason": "景观突出，适合预算充足且重视体验的旅客。",
+          "score": 9.2
+        }
+      ]
+    }
+  ]
+}

@@ -11,3 +11,6 @@ obj/
 # IDE
 .idea/
 .DS_Store
+
+# 运行时生成的旅行方案与用户记忆
+DotNetAgentDev/App_Data/
