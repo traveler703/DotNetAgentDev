@@ -40,7 +40,8 @@ public sealed class TravelCoordinatorAgent
 
     public async Task<TravelPlan> PlanAsync(
         TravelRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<PlanningStreamEvent>? onProgress = null)
     {
         var startDate = request.StartDate ?? DateOnly.FromDateTime(DateTime.Today.AddDays(30));
         request = request with { StartDate = startDate };
@@ -52,11 +53,13 @@ public sealed class TravelCoordinatorAgent
             Trace(2, "主控 Agent", "Action", "拆分专业子任务",
                 "并行委派行程、酒店、交通与风险 Agent，待事实数据返回后再执行预算 Agent。")
         };
+        EmitProgress(onProgress, "trace", coordinatorTrace[0], 5);
+        EmitProgress(onProgress, "trace", coordinatorTrace[1], 10);
 
-        var itineraryTask = _itineraryAgent.RunAsync(request, 10, cancellationToken);
-        var hotelTask = _hotelAgent.RunAsync(request, 100, cancellationToken);
-        var transportTask = _transportAgent.RunAsync(request, 200, cancellationToken);
-        var riskTask = _riskAgent.RunAsync(request, 300, cancellationToken);
+        var itineraryTask = _itineraryAgent.RunAsync(request, 10, cancellationToken, onProgress);
+        var hotelTask = _hotelAgent.RunAsync(request, 100, cancellationToken, onProgress);
+        var transportTask = _transportAgent.RunAsync(request, 200, cancellationToken, onProgress);
+        var riskTask = _riskAgent.RunAsync(request, 300, cancellationToken, onProgress);
         await Task.WhenAll(itineraryTask, hotelTask, transportTask, riskTask);
 
         var itineraryRun = await itineraryTask;
@@ -75,38 +78,49 @@ public sealed class TravelCoordinatorAgent
         var selectedHotels = SelectHotels(hotels, days, request);
         var costs = CalculateCostInputs(request, days, selectedHotels, transport, destinations);
 
-        coordinatorTrace.Add(Trace(
+        var summaryTrace = Trace(
             350,
             "主控 Agent",
             "Observation",
             "专业结果汇总",
             $"获得 {attractions.Count} 个候选体验、{hotels.Count} 个住宿方案，"
-            + $"交通预估 {transport.OutboundCost + transport.LocalCost + transport.IntercityCost:F0} 元。"));
+            + $"交通预估 {transport.OutboundCost + transport.LocalCost + transport.IntercityCost:F0} 元。");
+        coordinatorTrace.Add(summaryTrace);
+        EmitProgress(onProgress, "trace", summaryTrace, 72);
 
         var budgetContext = costs.ToDictionary(
             pair => pair.Key,
             pair => pair.Value.ToString(CultureInfo.InvariantCulture));
-        var budgetRun = await _budgetAgent.RunAsync(request, budgetContext, 400, cancellationToken);
+        var budgetRun = await _budgetAgent.RunAsync(
+            request,
+            budgetContext,
+            400,
+            cancellationToken,
+            onProgress);
         var budget = ParseBudget(budgetRun)
                      ?? BuildFallbackBudget(request, costs);
         var risks = ParseRisks(riskRun);
         risks.AddRange(ParseWeatherRisks(riskRun));
         var suggestions = BuildSuggestions(request, budget, transport, days);
 
-        coordinatorTrace.Add(Trace(
+        var conflictTrace = Trace(
             500,
             "主控 Agent",
             "Thought",
             "执行冲突检查",
             budget.IsOverBudget
                 ? $"预算超出 {Math.Abs(budget.Remaining):F0} 元，将优先给出住宿、交通和门票调整建议。"
-                : $"预算内仍有 {budget.Remaining:F0} 元机动空间，保留用于价格波动。"));
-        coordinatorTrace.Add(Trace(
+                : $"预算内仍有 {budget.Remaining:F0} 元机动空间，保留用于价格波动。");
+        coordinatorTrace.Add(conflictTrace);
+        EmitProgress(onProgress, "trace", conflictTrace, 90);
+        var finalTrace = Trace(
             501,
             "主控 Agent",
             "FinalAnswer",
             "生成统一旅行方案",
-            $"已整合 {request.Days} 天日程、住宿、交通、预算与 {risks.Count} 条风险提醒。"));
+            $"已整合 {request.Days} 天日程、住宿、交通、预算与 {risks.Count} 条风险提醒。");
+        coordinatorTrace.Add(finalTrace);
+        EmitProgress(onProgress, "trace", finalTrace, 96);
 
         var runs = new[] { itineraryRun, hotelRun, transportRun, riskRun, budgetRun };
         var allTrace = coordinatorTrace
@@ -146,6 +160,22 @@ public sealed class TravelCoordinatorAgent
             plan.Budget.BudgetLimit);
         return plan;
     }
+
+    private static void EmitProgress(
+        Action<PlanningStreamEvent>? onProgress,
+        string type,
+        AgentTraceStep trace,
+        int? percent = null) =>
+        onProgress?.Invoke(new PlanningStreamEvent
+        {
+            Type = type,
+            Agent = trace.Agent,
+            Phase = trace.Phase,
+            Title = trace.Title,
+            Detail = trace.Detail,
+            Percent = percent,
+            Timestamp = trace.Timestamp
+        });
 
     private static IReadOnlyList<AttractionCandidate>? ParseAttractions(AgentRunResult run)
     {

@@ -51,7 +51,7 @@
         <form id="planningForm" class="planning-card">
             <div class="card-heading">
                 <div>
-                    <span class="step-label">01 / 描述旅程</span>
+                    <span class="step-label">描述旅程</span>
                     <h2>从哪里出发，想去哪里？</h2>
                 </div>
                 <button id="exampleButton" class="text-button" type="button">填入示例</button>
@@ -181,6 +181,11 @@
         <p class="eyebrow">AGENTS AT WORK</p>
         <h2 id="progressTitle">主控 Agent 正在拆解任务</h2>
         <p id="progressDetail">接下来将协调行程、酒店、交通、预算与风险专家。</p>
+        <div class="stream-progress" aria-label="规划进度">
+            <i id="streamProgressBar"></i>
+        </div>
+        <div id="streamFeed" class="stream-feed" aria-live="polite"></div>
+        <p id="streamDelta" class="stream-delta"></p>
         <div class="progress-agents">
             <span>行程</span><span>酒店</span><span>交通</span><span>预算</span><span>风险</span>
         </div>

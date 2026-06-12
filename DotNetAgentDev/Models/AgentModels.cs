@@ -43,3 +43,15 @@ public sealed record AgentTaskContext(
     TravelRequest Request,
     string Task,
     IReadOnlyDictionary<string, string>? SharedContext = null);
+
+public sealed record PlanningStreamEvent
+{
+    public required string Type { get; init; }
+    public string Agent { get; init; } = "系统";
+    public string Phase { get; init; } = "Progress";
+    public required string Title { get; init; }
+    public string Detail { get; init; } = string.Empty;
+    public int? Percent { get; init; }
+    public TravelPlan? Plan { get; init; }
+    public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
+}

@@ -10,4 +10,10 @@ public interface ILlmClient
         IReadOnlyList<ChatMessage> messages,
         IReadOnlyList<ToolDefinition> tools,
         CancellationToken cancellationToken);
+
+    Task<LlmResponse> CompleteStreamingAsync(
+        IReadOnlyList<ChatMessage> messages,
+        IReadOnlyList<ToolDefinition> tools,
+        Action<string>? onContentDelta,
+        CancellationToken cancellationToken);
 }

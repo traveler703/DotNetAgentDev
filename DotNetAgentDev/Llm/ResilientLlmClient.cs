@@ -27,14 +27,55 @@ public sealed class ResilientLlmClient : ILlmClient
         IReadOnlyList<ToolDefinition> tools,
         CancellationToken cancellationToken)
     {
+        return await CompleteWithFallbackAsync(
+            messages,
+            tools,
+            null,
+            useStreaming: false,
+            cancellationToken);
+    }
+
+    public async Task<LlmResponse> CompleteStreamingAsync(
+        IReadOnlyList<ChatMessage> messages,
+        IReadOnlyList<ToolDefinition> tools,
+        Action<string>? onContentDelta,
+        CancellationToken cancellationToken)
+    {
+        return await CompleteWithFallbackAsync(
+            messages,
+            tools,
+            onContentDelta,
+            useStreaming: true,
+            cancellationToken);
+    }
+
+    private async Task<LlmResponse> CompleteWithFallbackAsync(
+        IReadOnlyList<ChatMessage> messages,
+        IReadOnlyList<ToolDefinition> tools,
+        Action<string>? onContentDelta,
+        bool useStreaming,
+        CancellationToken cancellationToken)
+    {
         if (!_deepSeek.IsConfigured || _fallbackActivated)
         {
-            return await _offline.CompleteAsync(messages, tools, cancellationToken);
+            return useStreaming
+                ? await _offline.CompleteStreamingAsync(
+                    messages,
+                    tools,
+                    onContentDelta,
+                    cancellationToken)
+                : await _offline.CompleteAsync(messages, tools, cancellationToken);
         }
 
         try
         {
-            return await _deepSeek.CompleteAsync(messages, tools, cancellationToken);
+            return useStreaming
+                ? await _deepSeek.CompleteStreamingAsync(
+                    messages,
+                    tools,
+                    onContentDelta,
+                    cancellationToken)
+                : await _deepSeek.CompleteAsync(messages, tools, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -46,7 +87,13 @@ public sealed class ResilientLlmClient : ILlmClient
             _logger.LogWarning(
                 exception,
                 "DeepSeek unavailable. Switching to the deterministic offline agent engine.");
-            return await _offline.CompleteAsync(messages, tools, cancellationToken);
+            return useStreaming
+                ? await _offline.CompleteStreamingAsync(
+                    messages,
+                    tools,
+                    onContentDelta,
+                    cancellationToken)
+                : await _offline.CompleteAsync(messages, tools, cancellationToken);
         }
     }
 }

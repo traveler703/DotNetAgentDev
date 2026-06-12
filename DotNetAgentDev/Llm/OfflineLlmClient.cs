@@ -48,6 +48,21 @@ public sealed partial class OfflineLlmClient
             "offline-rule-engine"));
     }
 
+    public async Task<LlmResponse> CompleteStreamingAsync(
+        IReadOnlyList<ChatMessage> messages,
+        IReadOnlyList<ToolDefinition> tools,
+        Action<string>? onContentDelta,
+        CancellationToken cancellationToken)
+    {
+        var response = await CompleteAsync(messages, tools, cancellationToken);
+        if (!string.IsNullOrWhiteSpace(response.Content))
+        {
+            onContentDelta?.Invoke(response.Content);
+        }
+
+        return response;
+    }
+
     private static TravelRequest ExtractRequest(IReadOnlyList<ChatMessage> messages)
     {
         var text = string.Join('\n', messages.Select(message => message.Content));

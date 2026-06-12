@@ -19,7 +19,8 @@ public sealed class TravelPlanningService
 
     public async Task<TravelPlan> CreatePlanAsync(
         TravelRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<PlanningStreamEvent>? onProgress = null)
     {
         var normalized = request with
         {
@@ -29,8 +30,17 @@ public sealed class TravelPlanningService
             Preferences = request.Preferences.Trim(),
             Notes = request.Notes.Trim()
         };
-        var plan = await _coordinator.PlanAsync(normalized, cancellationToken);
+        var plan = await _coordinator.PlanAsync(normalized, cancellationToken, onProgress);
         await _memory.SavePlanAsync(plan, cancellationToken);
+        onProgress?.Invoke(new PlanningStreamEvent
+        {
+            Type = "progress",
+            Agent = "记忆模块",
+            Phase = "Memory",
+            Title = "方案已保存",
+            Detail = "最终行程和用户偏好已写入长期记忆。",
+            Percent = 99
+        });
         return plan;
     }
 }

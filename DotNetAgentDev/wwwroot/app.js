@@ -2,7 +2,8 @@ const state = {
     plan: null,
     activeTab: "overview",
     history: [],
-    progressTimer: null
+    streamPercent: 1,
+    streamDeltaByAgent: new Map()
 };
 
 const elements = {
@@ -19,6 +20,9 @@ const elements = {
     overlay: document.querySelector("#planningOverlay"),
     progressTitle: document.querySelector("#progressTitle"),
     progressDetail: document.querySelector("#progressDetail"),
+    streamProgressBar: document.querySelector("#streamProgressBar"),
+    streamFeed: document.querySelector("#streamFeed"),
+    streamDelta: document.querySelector("#streamDelta"),
     historyButton: document.querySelector("#historyButton"),
     historyDrawer: document.querySelector("#historyDrawer"),
     drawerBackdrop: document.querySelector("#drawerBackdrop"),
@@ -107,15 +111,18 @@ async function createPlan(event) {
 
     setPlanning(true);
     try {
-        const response = await fetch("/api/plans", {
+        const response = await fetch("/api/plans/stream", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream"
+            },
             body: JSON.stringify(payload)
         });
         if (!response.ok) {
             throw new Error(await readError(response));
         }
-        state.plan = await response.json();
+        state.plan = await consumePlanningStream(response);
         state.activeTab = "overview";
         renderPlan();
         await Promise.all([loadHistory(), loadMemory()]);
@@ -131,22 +138,107 @@ function setPlanning(active) {
     elements.submitButton.disabled = active;
     elements.overlay.hidden = !active;
     if (!active) {
-        clearInterval(state.progressTimer);
         return;
     }
 
-    const stages = [
-        ["主控 Agent 正在拆解任务", "读取目的地、天数、预算、节奏和个性化约束。"],
-        ["专业 Agent 正在并行工作", "行程、酒店、交通与风险专家正在调用各自工具。"],
-        ["预算 Agent 正在检查约束", "汇总住宿、交通、餐饮与门票估算，判断是否超支。"],
-        ["主控 Agent 正在整合方案", "解决路线、舒适度与预算之间的冲突，生成最终计划。"]
-    ];
-    let index = 0;
-    [elements.progressTitle.textContent, elements.progressDetail.textContent] = stages[index];
-    state.progressTimer = setInterval(() => {
-        index = Math.min(index + 1, stages.length - 1);
-        [elements.progressTitle.textContent, elements.progressDetail.textContent] = stages[index];
-    }, 1250);
+    state.streamPercent = 1;
+    state.streamDeltaByAgent.clear();
+    elements.progressTitle.textContent = "正在建立流式连接";
+    elements.progressDetail.textContent = "服务器会持续推送 Agent 决策、工具行动和模型输出。";
+    elements.streamProgressBar.style.width = "1%";
+    elements.streamFeed.replaceChildren();
+    elements.streamDelta.textContent = "";
+}
+
+async function consumePlanningStream(response) {
+    if (!response.body) {
+        throw new Error("浏览器不支持流式响应。");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let completedPlan = null;
+
+    while (true) {
+        const { value, done } = await reader.read();
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+        buffer = buffer.replaceAll("\r\n", "\n");
+
+        let separatorIndex;
+        while ((separatorIndex = buffer.indexOf("\n\n")) >= 0) {
+            const block = buffer.slice(0, separatorIndex);
+            buffer = buffer.slice(separatorIndex + 2);
+            if (!block.trim()) continue;
+
+            const parsed = parseSseBlock(block);
+            if (!parsed.data) continue;
+            const streamEvent = JSON.parse(parsed.data);
+            handlePlanningEvent(streamEvent);
+
+            if (parsed.event === "completed" || streamEvent.type === "completed") {
+                completedPlan = streamEvent.plan;
+            }
+            if (parsed.event === "error" || streamEvent.type === "error") {
+                throw new Error(streamEvent.detail || "流式规划失败。");
+            }
+        }
+
+        if (done) break;
+    }
+
+    if (!completedPlan) {
+        throw new Error("流式连接已结束，但没有收到完整旅行方案。");
+    }
+    return completedPlan;
+}
+
+function parseSseBlock(block) {
+    let event = "message";
+    const data = [];
+    for (const line of block.split("\n")) {
+        if (line.startsWith("event:")) {
+            event = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+            data.push(line.slice(5).trimStart());
+        }
+    }
+    return { event, data: data.join("\n") };
+}
+
+function handlePlanningEvent(streamEvent) {
+    if (streamEvent.percent != null) {
+        state.streamPercent = Math.max(state.streamPercent, streamEvent.percent);
+    } else if (streamEvent.type === "trace") {
+        state.streamPercent = Math.min(95, state.streamPercent + 2);
+    }
+    elements.streamProgressBar.style.width = `${state.streamPercent}%`;
+
+    if (streamEvent.type === "delta") {
+        const previous = state.streamDeltaByAgent.get(streamEvent.agent) || "";
+        const current = `${previous}${streamEvent.detail || ""}`;
+        state.streamDeltaByAgent.set(streamEvent.agent, current.slice(-260));
+        elements.streamDelta.textContent =
+            `${streamEvent.agent}：${state.streamDeltaByAgent.get(streamEvent.agent)}`;
+        return;
+    }
+
+    elements.progressTitle.textContent = streamEvent.title || "Agent 正在工作";
+    elements.progressDetail.textContent = streamEvent.detail || "";
+
+    const item = document.createElement("div");
+    item.className = "stream-item";
+    const agent = document.createElement("b");
+    agent.textContent = streamEvent.agent || "系统";
+    const title = document.createElement("span");
+    title.textContent = `${streamEvent.phase || "Progress"} · ${streamEvent.title || ""}`;
+    item.append(agent, title);
+    elements.streamFeed.append(item);
+
+    while (elements.streamFeed.children.length > 8) {
+        elements.streamFeed.firstElementChild.remove();
+    }
+    elements.streamFeed.scrollTop = elements.streamFeed.scrollHeight;
 }
 
 function renderPlan() {

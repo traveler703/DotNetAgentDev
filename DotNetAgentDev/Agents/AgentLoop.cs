@@ -34,7 +34,8 @@ public sealed class AgentLoop
         AgentTaskContext context,
         IReadOnlyList<string> allowedTools,
         int sequenceStart,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<PlanningStreamEvent>? onProgress = null)
     {
         var tools = allowedTools.Select(_toolRegistry.GetDefinition).ToList();
         var messages = new List<ChatMessage>
@@ -55,6 +56,7 @@ public sealed class AgentLoop
             CreateTrace(sequenceStart, agentName, "Thought", "分析子任务",
                 $"根据用户约束分析“{context.Task}”，并选择必要工具获取事实数据。")
         };
+        EmitTrace(onProgress, trace[0]);
         var observations = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var toolCallCount = 0;
         var sequence = sequenceStart + 1;
@@ -63,17 +65,30 @@ public sealed class AgentLoop
         for (var step = 0; step < _options.MaxSteps; step++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var response = await _llmClient.CompleteAsync(messages, tools, cancellationToken);
+            var response = await _llmClient.CompleteStreamingAsync(
+                messages,
+                tools,
+                delta => onProgress?.Invoke(new PlanningStreamEvent
+                {
+                    Type = "delta",
+                    Agent = agentName,
+                    Phase = "Model",
+                    Title = "模型正在生成",
+                    Detail = delta
+                }),
+                cancellationToken);
 
             if (response.ToolCalls.Count == 0)
             {
                 finalAnswer = response.Content ?? "子任务已完成。";
-                trace.Add(CreateTrace(
+                var finalTrace = CreateTrace(
                     sequence++,
                     agentName,
                     "FinalAnswer",
                     "提交专业结论",
-                    finalAnswer));
+                    finalAnswer);
+                trace.Add(finalTrace);
+                EmitTrace(onProgress, finalTrace);
                 break;
             }
 
@@ -86,12 +101,14 @@ public sealed class AgentLoop
 
             foreach (var toolCall in response.ToolCalls)
             {
-                trace.Add(CreateTrace(
+                var actionTrace = CreateTrace(
                     sequence++,
                     agentName,
                     "Action",
                     $"调用 {toolCall.Name}",
-                    SummarizeArguments(toolCall.Arguments)));
+                    SummarizeArguments(toolCall.Arguments));
+                trace.Add(actionTrace);
+                EmitTrace(onProgress, actionTrace);
 
                 var result = await _toolRegistry.ExecuteAsync(
                     toolCall.Name,
@@ -100,12 +117,14 @@ public sealed class AgentLoop
                 toolCallCount++;
                 observations[toolCall.Name] = result.Content;
 
-                trace.Add(CreateTrace(
+                var observationTrace = CreateTrace(
                     sequence++,
                     agentName,
                     "Observation",
                     result.Success ? $"{toolCall.Name} 返回结果" : $"{toolCall.Name} 调用失败",
-                    SummarizeObservation(result)));
+                    SummarizeObservation(result));
+                trace.Add(observationTrace);
+                EmitTrace(onProgress, observationTrace);
 
                 messages.Add(new ChatMessage
                 {
@@ -119,12 +138,14 @@ public sealed class AgentLoop
         if (string.IsNullOrWhiteSpace(finalAnswer))
         {
             finalAnswer = "达到最大推理步数，主控 Agent 将使用已获得的工具结果继续生成方案。";
-            trace.Add(CreateTrace(
+            var limitTrace = CreateTrace(
                 sequence,
                 agentName,
                 "FinalAnswer",
                 "达到步数上限",
-                finalAnswer));
+                finalAnswer);
+            trace.Add(limitTrace);
+            EmitTrace(onProgress, limitTrace);
         }
 
         _logger.LogInformation(
@@ -175,6 +196,19 @@ public sealed class AgentLoop
         string title,
         string detail) =>
         new(sequence, agent, phase, title, detail, DateTimeOffset.UtcNow);
+
+    private static void EmitTrace(
+        Action<PlanningStreamEvent>? onProgress,
+        AgentTraceStep trace) =>
+        onProgress?.Invoke(new PlanningStreamEvent
+        {
+            Type = "trace",
+            Agent = trace.Agent,
+            Phase = trace.Phase,
+            Title = trace.Title,
+            Detail = trace.Detail,
+            Timestamp = trace.Timestamp
+        });
 
     private static string SummarizeArguments(string arguments)
     {
