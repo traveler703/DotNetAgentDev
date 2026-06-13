@@ -1,3 +1,4 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using DotNetAgentDev.Llm;
 using DotNetAgentDev.Models;
@@ -9,7 +10,10 @@ namespace DotNetAgentDev.Agents;
 
 public sealed class AgentLoop
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
 
     private readonly ILlmClient _llmClient;
     private readonly ToolRegistry _toolRegistry;

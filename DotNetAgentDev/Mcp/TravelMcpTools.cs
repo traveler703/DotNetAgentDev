@@ -178,6 +178,28 @@ public static class TravelMcpTools
             new { userId, preferences, destination },
             cancellationToken);
 
+    [McpServerTool(
+        Name = "travel_web_research",
+        Title = "旅游网页联网检索",
+        ReadOnly = true,
+        Destructive = false,
+        Idempotent = true,
+        OpenWorld = true)]
+    [Description("联网检索景点、美食、交通、签证、天气、自然灾害和社会治安资料，返回摘要与来源链接。")]
+    public static Task<string> TravelWebResearchAsync(
+        ToolRegistry registry,
+        [Description("旅行出发地。")] string departure,
+        [Description("旅行目的地。")] string destination,
+        [Description("出发日期，格式为 yyyy-MM-dd。")] string startDate,
+        [Description("旅行天数，范围 1 到 30。")] int days,
+        [Description("逗号分隔主题：itinerary,transport,food,visa,weather,disaster,safety。")] string topics,
+        CancellationToken cancellationToken) =>
+        ExecuteAsync(
+            registry,
+            "travel_web_research",
+            new { departure, destination, startDate, days, topics },
+            cancellationToken);
+
     private static async Task<string> ExecuteAsync(
         ToolRegistry registry,
         string toolName,

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using DotNetAgentDev.Models;
@@ -7,7 +8,10 @@ namespace DotNetAgentDev.Llm;
 
 public sealed partial class OfflineLlmClient
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
 
     public Task<LlmResponse> CompleteAsync(
         IReadOnlyList<ChatMessage> messages,
@@ -27,7 +31,8 @@ public sealed partial class OfflineLlmClient
         {
             var request = ExtractRequest(messages);
             var sharedContext = ExtractSharedContext(messages);
-            var arguments = BuildArguments(nextTool.Name, request, sharedContext);
+            var task = ExtractTask(messages);
+            var arguments = BuildArguments(nextTool.Name, request, sharedContext, task);
             var call = new LlmToolCall(
                 $"offline_{Guid.NewGuid():N}",
                 nextTool.Name,
@@ -100,7 +105,8 @@ public sealed partial class OfflineLlmClient
     private static Dictionary<string, object?> BuildArguments(
         string toolName,
         TravelRequest request,
-        IReadOnlyDictionary<string, JsonElement> context)
+        IReadOnlyDictionary<string, JsonElement> context,
+        string task)
     {
         var startDate = request.StartDate ?? DateOnly.FromDateTime(DateTime.Today.AddDays(30));
         var nightlyBudget = request.Budget * 0.28m / Math.Max(1, request.Days - 1);
@@ -154,8 +160,34 @@ public sealed partial class OfflineLlmClient
                 ["preferences"] = request.Preferences,
                 ["destination"] = request.Destination
             },
+            "travel_web_research" => new()
+            {
+                ["departure"] = request.Departure,
+                ["destination"] = request.Destination,
+                ["startDate"] = startDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                ["days"] = request.Days,
+                ["topics"] = task.Contains("风险", StringComparison.OrdinalIgnoreCase)
+                             || task.Contains("签证", StringComparison.OrdinalIgnoreCase)
+                    ? "visa,weather,disaster,safety"
+                    : task.Contains("交通", StringComparison.OrdinalIgnoreCase)
+                        ? "transport"
+                        : "itinerary,transport,food"
+            },
             _ => []
         };
+    }
+
+    private static string ExtractTask(IReadOnlyList<ChatMessage> messages)
+    {
+        var userMessage = messages.LastOrDefault(message => message.Role == "user")?.Content;
+        if (string.IsNullOrWhiteSpace(userMessage))
+        {
+            return string.Empty;
+        }
+
+        var firstLine = userMessage.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault(line => line.TrimStart().StartsWith("子任务：", StringComparison.Ordinal));
+        return firstLine?.Trim() ?? string.Empty;
     }
 
     private static Dictionary<string, object?> BuildBudgetArguments(

@@ -3,7 +3,8 @@ const state = {
     activeTab: "overview",
     history: [],
     streamPercent: 1,
-    streamDeltaByAgent: new Map()
+    streamDeltaByAgent: new Map(),
+    selectedBudgetCategory: "transport"
 };
 
 const elements = {
@@ -48,6 +49,12 @@ function bindEvents() {
         document.querySelectorAll("[data-tab]").forEach(tab => {
             tab.classList.toggle("active", tab.dataset.tab === state.activeTab);
         });
+        renderActiveTab();
+    });
+    elements.resultContent.addEventListener("click", event => {
+        const budgetItem = event.target.closest("[data-budget-category]");
+        if (!budgetItem) return;
+        state.selectedBudgetCategory = budgetItem.dataset.budgetCategory;
         renderActiveTab();
     });
     elements.historyButton.addEventListener("click", openHistory);
@@ -124,6 +131,7 @@ async function createPlan(event) {
         }
         state.plan = await consumePlanningStream(response);
         state.activeTab = "overview";
+        state.selectedBudgetCategory = "transport";
         renderPlan();
         await Promise.all([loadHistory(), loadMemory()]);
         elements.workspace.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -271,6 +279,12 @@ function renderActiveTab() {
 function renderOverview() {
     const plan = state.plan;
     const percent = Math.min(115, (plan.budget.total / plan.budget.budgetLimit) * 100);
+    const highlights = plan.days.flatMap(day => day.activities
+        .filter(activity => !["交通", "餐饮"].includes(activity.category))
+        .map(activity => ({ ...activity, day: day.day, city: day.city })))
+        .filter((activity, index, items) =>
+            items.findIndex(item => item.name === activity.name) === index)
+        .slice(0, 6);
     return `
         <div class="overview-grid">
             <article class="result-card summary-card">
@@ -290,6 +304,9 @@ function renderOverview() {
                     ${plan.budget.isOverBudget ? `超支 ${money(Math.abs(plan.budget.remaining))}` : `余量 ${money(plan.budget.remaining)}`}
                 </p>
                 <div class="progress-bar"><i class="${plan.budget.isOverBudget ? "over" : ""}" style="width:${percent}%"></i></div>
+                ${plan.planningRevisionCount
+                    ? `<p class="revision-note">已因首次方案超过预算 110% 自动完成第 ${plan.planningRevisionCount + 1} 轮规划。</p>`
+                    : ""}
             </article>
             <article class="result-card agent-card">
                 <p class="card-kicker">AGENT TEAM</p>
@@ -305,17 +322,17 @@ function renderOverview() {
                 </div>
             </article>
             <article class="result-card hotel-card">
-                <p class="card-kicker">STAY RECOMMENDATIONS</p>
-                <h3>建议住宿落点</h3>
-                <div class="hotel-list">
-                    ${plan.hotels.map(hotel => `
+                <p class="card-kicker">ITINERARY HIGHLIGHTS</p>
+                <h3>行程简述</h3>
+                <div class="hotel-list itinerary-highlights">
+                    ${highlights.map(item => `
                         <div class="hotel-item">
-                            <span class="agent-icon">宿</span>
+                            <span class="agent-icon">${String(item.day).padStart(2, "0")}</span>
                             <div>
-                                <b>${escapeHtml(hotel.name)}</b>
-                                <span>${escapeHtml(hotel.city)} · ${escapeHtml(hotel.area)} · ${escapeHtml(hotel.level)}</span>
+                                <b>${escapeHtml(item.name)}</b>
+                                <span>第 ${item.day} 天 · ${escapeHtml(item.city)} · ${escapeHtml(item.time)}-${escapeHtml(item.endTime || "")}</span>
                             </div>
-                            <span class="hotel-price">${money(hotel.pricePerNight)}/晚</span>
+                            <span class="hotel-price">${escapeHtml(item.category)}</span>
                         </div>
                     `).join("")}
                 </div>
@@ -337,17 +354,29 @@ function renderItinerary() {
                     <div class="day-body">
                         <div class="day-header">
                             <div><h3>${escapeHtml(day.theme)}</h3><span>${escapeHtml(day.paceNote)}</span></div>
-                            <span>当日估算 ${money(day.estimatedCost)}</span>
+                            <div class="day-cost-summary">
+                                <b>当日估算 ${money(day.estimatedCost)}</b>
+                                <span>交通 ${money(day.costBreakdown?.transport)}</span>
+                                <span>门票 ${money(day.costBreakdown?.tickets)}</span>
+                                <span>餐饮 ${money(day.costBreakdown?.food)}</span>
+                            </div>
                         </div>
                         ${day.activities.map(activity => `
                             <div class="activity">
-                                <time>${activity.time}</time>
+                                <time>${escapeHtml(activity.time)}<small>${activity.endTime ? `-${escapeHtml(activity.endTime)}` : ""}</small></time>
                                 <span class="activity-dot"></span>
                                 <div>
-                                    <b>${escapeHtml(activity.name)} · ${escapeHtml(activity.area)}</b>
+                                    <b>${escapeHtml(activity.name)}</b>
+                                    <em>${escapeHtml(activity.venue || activity.area)} · ${escapeHtml(activity.category)}</em>
                                     <small>${escapeHtml(activity.description)}</small>
+                                    ${activity.sourceUrl
+                                        ? `<a class="source-link" href="${safeUrl(activity.sourceUrl)}" target="_blank" rel="noreferrer">来源：${escapeHtml(activity.sourceTitle || "网页资料")}</a>`
+                                        : ""}
                                 </div>
-                                <span class="activity-cost">${activity.cost ? money(activity.cost) : "免费"}</span>
+                                <div class="activity-cost">
+                                    <b>${activity.cost ? money(activity.cost) : "免费"}</b>
+                                    ${renderActivityCosts(activity.costBreakdown)}
+                                </div>
                             </div>
                         `).join("")}
                     </div>
@@ -360,25 +389,28 @@ function renderItinerary() {
 function renderBudget() {
     const plan = state.plan;
     const items = [
-        ["交通", plan.budget.transport],
-        ["住宿", plan.budget.accommodation],
-        ["餐饮", plan.budget.food],
-        ["门票", plan.budget.tickets],
-        ["其他", plan.budget.other]
+        ["transport", "交通", plan.budget.transport],
+        ["accommodation", "住宿", plan.budget.accommodation],
+        ["food", "餐饮", plan.budget.food],
+        ["tickets", "门票", plan.budget.tickets],
+        ["other", "其他", plan.budget.other]
     ];
-    const max = Math.max(...items.map(item => item[1]), 1);
+    const max = Math.max(...items.map(item => item[2]), 1);
+    const selected = items.find(item => item[0] === state.selectedBudgetCategory) || items[0];
+    const details = getExpenseDetails(plan, selected[0]);
     return `
         <div class="budget-grid">
             <article class="result-card budget-chart">
                 <p class="card-kicker">COST BREAKDOWN</p>
-                <h3>费用明细</h3>
+                <h3>各项费用</h3>
                 <div class="budget-table">
-                    ${items.map(([label, value]) => `
-                        <div class="budget-row">
+                    ${items.map(([category, label, value]) => `
+                        <button class="budget-row budget-select ${category === selected[0] ? "active" : ""}"
+                                type="button" data-budget-category="${category}">
                             <span>${label}</span>
                             <div class="mini-bar"><i style="width:${(value / max) * 100}%"></i></div>
                             <b>${money(value)}</b>
-                        </div>
+                        </button>
                     `).join("")}
                 </div>
                 <div class="suggestion-list">
@@ -387,19 +419,24 @@ function renderBudget() {
                     </ul>
                 </div>
             </article>
-            <article class="result-card transport-card">
-                <p class="card-kicker">TRANSPORT PLAN</p>
-                <h3>交通方案</h3>
-                <div class="transport-main">
-                    <b>${escapeHtml(plan.transport.outboundMode)}</b>
-                    <span>${escapeHtml(plan.transport.outboundDescription)}</span>
+            <article class="result-card transport-card expense-detail-card">
+                <p class="card-kicker">EXPENSE DETAILS</p>
+                <h3>${selected[1]}支出明细</h3>
+                <div class="expense-total">
+                    <span>${details.length} 笔支出</span>
+                    <b>${money(selected[2])}</b>
                 </div>
-                <div class="budget-row"><span>往返交通</span><div></div><b>${money(plan.transport.outboundCost)}</b></div>
-                <div class="budget-row"><span>跨城交通</span><div></div><b>${money(plan.transport.intercityCost)}</b></div>
-                <div class="budget-row"><span>市内交通</span><div></div><b>${money(plan.transport.localCost)}</b></div>
-                <ul class="plain-list">
-                    ${plan.transport.routeNotes.map(note => `<li>${escapeHtml(note)}</li>`).join("")}
-                </ul>
+                <div class="expense-list">
+                    ${details.length ? details.map(detail => `
+                        <div class="expense-item">
+                            <div>
+                                <b>${escapeHtml(detail.label)}</b>
+                                <span>${detail.date ? `${formatMonthDay(detail.date)} · ` : ""}${escapeHtml(detail.description)}</span>
+                            </div>
+                            <strong>${money(detail.amount)}</strong>
+                        </div>
+                    `).join("") : `<p class="subtle">该历史方案没有保存分项数据，请重新生成方案。</p>`}
+                </div>
             </article>
         </div>
     `;
@@ -416,6 +453,15 @@ function renderRisks() {
                         <h3>${escapeHtml(risk.title)}</h3>
                         <p>${escapeHtml(risk.detail)}</p>
                         <strong>建议：${escapeHtml(risk.recommendation)}</strong>
+                        ${risk.sources?.length ? `
+                            <div class="risk-sources">
+                                ${risk.sources.map(source => `
+                                    <a href="${safeUrl(source.url)}" target="_blank" rel="noreferrer">
+                                        ${escapeHtml(source.title)}${source.publishedAt ? ` · ${escapeHtml(source.publishedAt)}` : ""}
+                                    </a>
+                                `).join("")}
+                            </div>
+                        ` : ""}
                     </div>
                 </article>
             `).join("")}
@@ -433,7 +479,7 @@ function renderTrace() {
                 ${plan.agentContributions.map(agent => `
                     <div class="trace-agent">
                         <b>${escapeHtml(agent.agent)} · ${agent.toolCallCount} 次工具</b>
-                        <span>${escapeHtml(agent.summary)}</span>
+                        <div class="markdown-body">${renderMarkdown(agent.summary)}</div>
                     </div>
                 `).join("")}
             </aside>
@@ -510,6 +556,7 @@ async function loadPlan(id) {
     if (!response.ok) return;
     state.plan = await response.json();
     state.activeTab = "overview";
+    state.selectedBudgetCategory = "transport";
     renderPlan();
     elements.workspace.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -589,6 +636,80 @@ function formatCreatedAt(value) {
 
 function shortPhase(phase) {
     return { Thought: "T", Action: "A", Observation: "O", FinalAnswer: "F" }[phase] || "·";
+}
+
+function renderActivityCosts(costs) {
+    if (!costs) return "";
+    const entries = [
+        ["交通", costs.transport],
+        ["门票", costs.tickets],
+        ["餐饮", costs.food],
+        ["其他", costs.other]
+    ].filter(([, value]) => Number(value) > 0);
+    return entries.map(([label, value]) => `<small>${label} ${money(value)}</small>`).join("");
+}
+
+function getExpenseDetails(plan, category) {
+    if (plan.expenseDetails?.length) {
+        return plan.expenseDetails.filter(detail => detail.category === category);
+    }
+    if (category === "transport") {
+        return [
+            { label: "往返交通", description: plan.transport.outboundDescription, amount: plan.transport.outboundCost },
+            { label: "跨城交通", description: "城市间移动估算", amount: plan.transport.intercityCost },
+            { label: "市内交通", description: "每日公共交通与接驳", amount: plan.transport.localCost }
+        ].filter(item => item.amount > 0);
+    }
+    return [];
+}
+
+function renderMarkdown(value) {
+    const escaped = escapeHtml(value || "");
+    const lines = escaped.split(/\r?\n/);
+    const output = [];
+    let inList = false;
+    for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (/^[-*]\s+/.test(line)) {
+            if (!inList) {
+                output.push("<ul>");
+                inList = true;
+            }
+            output.push(`<li>${renderInlineMarkdown(line.replace(/^[-*]\s+/, ""))}</li>`);
+            continue;
+        }
+        if (inList) {
+            output.push("</ul>");
+            inList = false;
+        }
+        if (!line) continue;
+        const heading = line.match(/^(#{1,4})\s+(.+)$/);
+        if (heading) {
+            const level = Math.min(5, heading[1].length + 2);
+            output.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
+        } else {
+            output.push(`<p>${renderInlineMarkdown(line)}</p>`);
+        }
+    }
+    if (inList) output.push("</ul>");
+    return output.join("");
+}
+
+function renderInlineMarkdown(value) {
+    return value
+        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+        .replace(/`([^`]+)`/g, "<code>$1</code>")
+        .replace(/\[([^\]]+)]\((https?:\/\/[^)\s]+)\)/g,
+            '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+}
+
+function safeUrl(value) {
+    try {
+        const url = new URL(value, window.location.origin);
+        return ["http:", "https:"].includes(url.protocol) ? escapeHtml(url.href) : "#";
+    } catch {
+        return "#";
+    }
 }
 
 function unique(items) {

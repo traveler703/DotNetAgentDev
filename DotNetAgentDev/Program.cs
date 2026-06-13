@@ -36,6 +36,13 @@ builder.Services.AddSingleton<ILlmClient, ResilientLlmClient>();
 builder.Services.AddSingleton<TourismCatalog>();
 builder.Services.AddSingleton<PlanningMemoryStore>();
 builder.Services.AddSingleton<ToolRegistry>();
+builder.Services.AddHttpClient(
+    "TravelWebResearch",
+    client =>
+    {
+        client.Timeout = TimeSpan.FromSeconds(15);
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("DotNetAgentDev/1.0 travel-research");
+    });
 
 builder.Services.AddSingleton<AttractionSearchTool>();
 builder.Services.AddSingleton<RouteSortTool>();
@@ -45,6 +52,7 @@ builder.Services.AddSingleton<BudgetCalculatorTool>();
 builder.Services.AddSingleton<WeatherLookupTool>();
 builder.Services.AddSingleton<RiskCheckTool>();
 builder.Services.AddSingleton<PreferenceMemoryTool>();
+builder.Services.AddSingleton<TravelWebResearchTool>();
 
 builder.Services.AddSingleton<AgentLoop>();
 builder.Services.AddSingleton<ItineraryAgent>();
@@ -68,6 +76,9 @@ if (dotEnvPath is not null)
     app.Logger.LogInformation("Loaded local environment configuration from {DotEnvPath}.", dotEnvPath);
 }
 
+await app.Services.GetRequiredService<PlanningMemoryStore>()
+    .NormalizeStoredJsonAsync(CancellationToken.None);
+
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
@@ -90,7 +101,7 @@ app.MapGet("/api/status", (
             enabled = true,
             endpoint = "/mcp",
             transport = "streamable-http",
-            tools = 8
+            tools = 9
         },
         message = llmClient.CurrentMode == "deepseek"
             ? "DeepSeek API 已从配置或 .env 加载。"

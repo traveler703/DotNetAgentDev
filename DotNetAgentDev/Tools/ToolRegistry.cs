@@ -16,6 +16,7 @@ public sealed class ToolRegistry
         WeatherLookupTool weatherLookup,
         RiskCheckTool riskCheck,
         PreferenceMemoryTool preferenceMemory,
+        TravelWebResearchTool travelWebResearch,
         ILogger<ToolRegistry> logger)
     {
         var tools = new IAgentTool[]
@@ -27,7 +28,8 @@ public sealed class ToolRegistry
             budgetCalculator,
             weatherLookup,
             riskCheck,
-            preferenceMemory
+            preferenceMemory,
+            travelWebResearch
         };
         _tools = tools.ToDictionary(tool => tool.Definition.Name, StringComparer.OrdinalIgnoreCase);
         _logger = logger;

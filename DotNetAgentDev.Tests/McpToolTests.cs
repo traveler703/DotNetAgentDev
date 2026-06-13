@@ -15,7 +15,7 @@ namespace DotNetAgentDev.Tests;
 public sealed class McpToolTests
 {
     [Fact]
-    public void TravelMcpTools_ExposeAllEightProjectTools()
+    public void TravelMcpTools_ExposeAllNineProjectTools()
     {
         var names = typeof(TravelMcpTools)
             .GetMethods(BindingFlags.Public | BindingFlags.Static)
@@ -23,7 +23,7 @@ public sealed class McpToolTests
             .Where(name => name is not null)
             .ToHashSet(StringComparer.Ordinal);
 
-        Assert.Equal(8, names.Count);
+        Assert.Equal(9, names.Count);
         Assert.Contains("attraction_search", names);
         Assert.Contains("route_sort", names);
         Assert.Contains("hotel_search", names);
@@ -32,6 +32,7 @@ public sealed class McpToolTests
         Assert.Contains("weather_lookup", names);
         Assert.Contains("risk_check", names);
         Assert.Contains("preference_memory", names);
+        Assert.Contains("travel_web_research", names);
     }
 
     [Fact]
@@ -76,7 +77,15 @@ public sealed class McpToolTests
             new WeatherLookupTool(catalog),
             new RiskCheckTool(catalog),
             new PreferenceMemoryTool(memory),
+            new TravelWebResearchTool(
+                new StubHttpClientFactory(),
+                NullLogger<TravelWebResearchTool>.Instance),
             NullLogger<ToolRegistry>.Instance);
+    }
+
+    private sealed class StubHttpClientFactory : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new();
     }
 
     private sealed class TestWebHostEnvironment : IWebHostEnvironment

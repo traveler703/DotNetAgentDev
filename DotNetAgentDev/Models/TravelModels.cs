@@ -43,6 +43,8 @@ public sealed record TravelPlan
     public required IReadOnlyList<string> AdjustmentSuggestions { get; init; }
     public required IReadOnlyList<AgentTraceStep> Trace { get; init; }
     public required IReadOnlyList<AgentContribution> AgentContributions { get; init; }
+    public IReadOnlyList<ExpenseDetail> ExpenseDetails { get; init; } = [];
+    public int PlanningRevisionCount { get; init; }
     public string ModelMode { get; init; } = "offline";
 }
 
@@ -53,7 +55,8 @@ public sealed record DayPlan(
     string Theme,
     IReadOnlyList<TravelActivity> Activities,
     decimal EstimatedCost,
-    string PaceNote);
+    string PaceNote,
+    DayCostBreakdown? CostBreakdown = null);
 
 public sealed record TravelActivity(
     string Time,
@@ -62,7 +65,30 @@ public sealed record TravelActivity(
     string Description,
     decimal Cost,
     int DurationMinutes,
-    string Area);
+    string Area,
+    string EndTime = "",
+    string Venue = "",
+    ActivityCostBreakdown? CostBreakdown = null,
+    string? SourceTitle = null,
+    string? SourceUrl = null);
+
+public sealed record ActivityCostBreakdown(
+    decimal Transport,
+    decimal Tickets,
+    decimal Food,
+    decimal Other)
+{
+    public decimal Total => Transport + Tickets + Food + Other;
+}
+
+public sealed record DayCostBreakdown(
+    decimal Transport,
+    decimal Tickets,
+    decimal Food,
+    decimal Other)
+{
+    public decimal Total => Transport + Tickets + Food + Other;
+}
 
 public sealed record AttractionCandidate(
     string City,
@@ -110,7 +136,39 @@ public sealed record RiskNotice(
     string Category,
     string Title,
     string Detail,
-    string Recommendation);
+    string Recommendation,
+    IReadOnlyList<SourceReference>? Sources = null);
+
+public sealed record SourceReference(
+    string Title,
+    string Url,
+    string? PublishedAt = null);
+
+public sealed record ExpenseDetail(
+    string Category,
+    DateOnly? Date,
+    string Label,
+    string Description,
+    decimal Amount);
+
+public sealed record WebResearchReport(
+    DateTimeOffset SearchedAt,
+    string Source,
+    string Disclaimer,
+    IReadOnlyList<WebResearchSection> Sections);
+
+public sealed record WebResearchSection(
+    string Topic,
+    string Query,
+    IReadOnlyList<WebResearchItem> Results,
+    string? Error = null);
+
+public sealed record WebResearchItem(
+    string Title,
+    string Url,
+    string Snippet,
+    string? PublishedAt,
+    bool LooksOfficial);
 
 public sealed record AgentTraceStep(
     int Sequence,
