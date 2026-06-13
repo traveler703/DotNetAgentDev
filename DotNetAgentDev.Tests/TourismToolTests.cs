@@ -30,6 +30,62 @@ public sealed class TourismToolTests
             item => item.GetProperty("city").GetString() == "京都");
     }
 
+    [Theory]
+    [InlineData("香港", "K11 MUSEA", "尖沙咀海滨花园与星光大道")]
+    [InlineData("台湾", "台北101观景台", "台北故宫博物院")]
+    [InlineData("越南", "还剑湖与玉山祠", "会安古城")]
+    public async Task AttractionSearch_ReturnsRealNamedPlaces_ForCuratedDestinations(
+        string destination,
+        string expectedFirst,
+        string expectedSecond)
+    {
+        var tool = new AttractionSearchTool(CreateCatalog());
+        var result = await tool.ExecuteAsync(
+            $$"""{"destination":"{{destination}}","preferences":"人文、夜景、城市漫步","maxResults":14}""",
+            CancellationToken.None);
+        using var document = JsonDocument.Parse(result.Content);
+        var names = document.RootElement.GetProperty("candidates")
+            .EnumerateArray()
+            .Select(item => item.GetProperty("name").GetString())
+            .ToList();
+
+        Assert.True(result.Success);
+        Assert.Equal("curated-named-destination-fallback",
+            document.RootElement.GetProperty("source").GetString());
+        Assert.Contains(expectedFirst, names);
+        Assert.Contains(expectedSecond, names);
+        Assert.DoesNotContain(names, name => name?.Contains("城市历史博物馆") == true);
+        Assert.DoesNotContain(names, name => name?.Contains("老城步行街") == true);
+    }
+
+    [Fact]
+    public async Task RouteSort_SelectsLimitedCitiesBeforePlanningBroadDestination()
+    {
+        var tool = new RouteSortTool(CreateCatalog());
+        var result = await tool.ExecuteAsync(
+            """
+            {
+              "destination":"越南",
+              "preferences":"人文、美食",
+              "pace":"Balanced",
+              "days":7,
+              "budget":12000,
+              "travelers":1
+            }
+            """,
+            CancellationToken.None);
+        using var document = JsonDocument.Parse(result.Content);
+        var cities = document.RootElement.GetProperty("orderedCities")
+            .EnumerateArray()
+            .ToList();
+
+        Assert.True(result.Success);
+        Assert.Equal(2, cities.Count);
+        Assert.Equal("河内", cities[0].GetProperty("city").GetString());
+        Assert.Equal("岘港", cities[1].GetProperty("city").GetString());
+        Assert.Equal(7, cities.Sum(city => city.GetProperty("recommendedDays").GetInt32()));
+    }
+
     [Fact]
     public async Task HotelSearch_UsesGenericFallback_ForUnknownDestination()
     {

@@ -124,7 +124,9 @@ public sealed partial class OfflineLlmClient
                 ["destination"] = request.Destination,
                 ["preferences"] = request.Preferences,
                 ["pace"] = request.Pace.ToString(),
-                ["days"] = request.Days
+                ["days"] = request.Days,
+                ["budget"] = request.Budget,
+                ["travelers"] = request.Travelers
             },
             "hotel_search" => new()
             {

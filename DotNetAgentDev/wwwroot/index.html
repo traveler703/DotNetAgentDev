@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="基于 .NET 10 与 DeepSeek 的多 Agent 旅游规划系统">
     <title>旅序 · 多 Agent 旅游规划</title>
-    <link rel="stylesheet" href="/styles.css">
-    <script src="/app.js" defer></script>
+    <link rel="stylesheet" href="/styles.css?v=20260613-2">
+    <script src="/app.js?v=20260613-2" defer></script>
 </head>
 <body>
 <div class="ambient ambient-one"></div>
@@ -173,23 +173,39 @@
 <div id="drawerBackdrop" class="drawer-backdrop" hidden></div>
 
 <div id="planningOverlay" class="planning-overlay" hidden>
-    <div class="planning-progress">
-        <div class="orbital-loader">
-            <span></span><span></span><span></span>
-            <b>AI</b>
+    <section class="planning-chat-shell" aria-label="Agent 实时对话">
+        <header class="planning-chat-header">
+            <div class="planning-chat-brand">
+                <span class="chat-avatar coordinator">主</span>
+                <div>
+                    <p class="eyebrow">AGENT TEAM LIVE</p>
+                    <h2 id="progressTitle">主控 Agent 正在拆解任务</h2>
+                </div>
+            </div>
+            <div class="planning-chat-status">
+                <span class="live-dot"></span>
+                <span id="streamConnectionState">正在连接 SSE</span>
+            </div>
+        </header>
+        <div class="planning-chat-progress">
+            <div class="stream-progress" aria-label="规划进度">
+                <i id="streamProgressBar"></i>
+            </div>
+            <p id="progressDetail">服务器会持续推送 Agent 回复和工具调用。</p>
+            <div class="planning-capabilities" aria-label="当前协作能力">
+                <span>SSE 流式输出</span>
+                <span>6 Agent 协作</span>
+                <span>9 个工具</span>
+                <span>MCP Server</span>
+                <span>长期记忆</span>
+            </div>
         </div>
-        <p class="eyebrow">AGENTS AT WORK</p>
-        <h2 id="progressTitle">主控 Agent 正在拆解任务</h2>
-        <p id="progressDetail">接下来将协调行程、酒店、交通、预算与风险专家。</p>
-        <div class="stream-progress" aria-label="规划进度">
-            <i id="streamProgressBar"></i>
+        <div id="streamConversation"
+             class="agent-conversation live-conversation"
+             aria-live="polite"
+             aria-label="Agent 实时消息">
         </div>
-        <div id="streamFeed" class="stream-feed" aria-live="polite"></div>
-        <p id="streamDelta" class="stream-delta"></p>
-        <div class="progress-agents">
-            <span>行程</span><span>酒店</span><span>交通</span><span>预算</span><span>风险</span>
-        </div>
-    </div>
+    </section>
 </div>
 
 <template id="emptyHistoryTemplate">

@@ -3,7 +3,12 @@ const state = {
     activeTab: "overview",
     history: [],
     streamPercent: 1,
-    streamDeltaByAgent: new Map(),
+    streamEventCount: 0,
+    streamConnected: false,
+    streamAbortController: null,
+    systemStatus: null,
+    streamTextByMessage: new Map(),
+    streamElementByMessage: new Map(),
     selectedBudgetCategory: "transport"
 };
 
@@ -21,9 +26,9 @@ const elements = {
     overlay: document.querySelector("#planningOverlay"),
     progressTitle: document.querySelector("#progressTitle"),
     progressDetail: document.querySelector("#progressDetail"),
+    streamConnectionState: document.querySelector("#streamConnectionState"),
     streamProgressBar: document.querySelector("#streamProgressBar"),
-    streamFeed: document.querySelector("#streamFeed"),
-    streamDelta: document.querySelector("#streamDelta"),
+    streamConversation: document.querySelector("#streamConversation"),
     historyButton: document.querySelector("#historyButton"),
     historyDrawer: document.querySelector("#historyDrawer"),
     drawerBackdrop: document.querySelector("#drawerBackdrop"),
@@ -89,6 +94,7 @@ async function loadStatus() {
     try {
         const response = await fetch("/api/status");
         const status = await response.json();
+        state.systemStatus = status;
         elements.modeBadge.classList.remove("is-loading");
         elements.modeBadge.classList.toggle("is-online", status.mode === "deepseek");
         elements.modeBadge.querySelector("span:last-child").textContent =
@@ -116,7 +122,12 @@ async function createPlan(event) {
         notes: formData.get("notes") || ""
     };
 
-    setPlanning(true);
+    setPlanning(true, payload);
+    const controller = new AbortController();
+    state.streamAbortController = controller;
+    const connectionTimeout = window.setTimeout(() => {
+        controller.abort(new Error("连接 Agent 流式服务超时，请确认服务正在运行后重试。"));
+    }, 15000);
     try {
         const response = await fetch("/api/plans/stream", {
             method: "POST",
@@ -124,41 +135,62 @@ async function createPlan(event) {
                 "Content-Type": "application/json",
                 "Accept": "text/event-stream"
             },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            signal: controller.signal
         });
+        window.clearTimeout(connectionTimeout);
         if (!response.ok) {
             throw new Error(await readError(response));
         }
-        state.plan = await consumePlanningStream(response);
+        state.streamConnected = true;
+        elements.streamConnectionState.textContent = "SSE 已连接";
+        state.plan = await consumePlanningStream(response, controller);
         state.activeTab = "overview";
         state.selectedBudgetCategory = "transport";
         renderPlan();
         await Promise.all([loadHistory(), loadMemory()]);
         elements.workspace.scrollIntoView({ behavior: "smooth", block: "start" });
     } catch (error) {
-        showError(error.message || "生成方案失败，请稍后重试。");
+        const message = controller.signal.aborted
+            ? controller.signal.reason?.message || "流式连接已中止，请稍后重试。"
+            : error.message || "生成方案失败，请稍后重试。";
+        showError(message);
     } finally {
+        window.clearTimeout(connectionTimeout);
+        state.streamAbortController = null;
         setPlanning(false);
     }
 }
 
-function setPlanning(active) {
+function setPlanning(active, request = null) {
     elements.submitButton.disabled = active;
     elements.overlay.hidden = !active;
+    document.body.classList.toggle("planning-open", active);
     if (!active) {
         return;
     }
 
     state.streamPercent = 1;
-    state.streamDeltaByAgent.clear();
-    elements.progressTitle.textContent = "正在建立流式连接";
-    elements.progressDetail.textContent = "服务器会持续推送 Agent 决策、工具行动和模型输出。";
+    state.streamEventCount = 0;
+    state.streamConnected = false;
+    state.streamTextByMessage.clear();
+    state.streamElementByMessage.clear();
+    elements.progressTitle.textContent = "正在建立 Agent 对话";
+    elements.progressDetail.textContent = "模型回复、工具调用和工具返回会在这里即时出现。";
+    elements.streamConnectionState.textContent = "正在连接 SSE";
     elements.streamProgressBar.style.width = "1%";
-    elements.streamFeed.replaceChildren();
-    elements.streamDelta.textContent = "";
+    elements.streamConversation.replaceChildren();
+    if (request) {
+        appendUserChatMessage(
+            elements.streamConversation,
+            `请规划从${request.departure}前往${request.destination}的${request.days}天旅行，`
+            + `${request.travelers}人，总预算${money(request.budget)}。`
+            + `${request.preferences ? `偏好：${request.preferences}。` : ""}`
+            + `${request.notes ? `补充要求：${request.notes}。` : ""}`);
+    }
 }
 
-async function consumePlanningStream(response) {
+async function consumePlanningStream(response, controller) {
     if (!response.body) {
         throw new Error("浏览器不支持流式响应。");
     }
@@ -169,7 +201,7 @@ async function consumePlanningStream(response) {
     let completedPlan = null;
 
     while (true) {
-        const { value, done } = await reader.read();
+        const { value, done } = await readStreamChunk(reader, controller);
         buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
         buffer = buffer.replaceAll("\r\n", "\n");
 
@@ -201,6 +233,24 @@ async function consumePlanningStream(response) {
     return completedPlan;
 }
 
+async function readStreamChunk(reader, controller) {
+    let timeoutId;
+    try {
+        return await Promise.race([
+            reader.read(),
+            new Promise((_, reject) => {
+                timeoutId = window.setTimeout(() => {
+                    const error = new Error("20 秒未收到流式心跳，连接可能已中断。");
+                    controller.abort(error);
+                    reject(error);
+                }, 20000);
+            })
+        ]);
+    } finally {
+        window.clearTimeout(timeoutId);
+    }
+}
+
 function parseSseBlock(block) {
     let event = "message";
     const data = [];
@@ -215,38 +265,39 @@ function parseSseBlock(block) {
 }
 
 function handlePlanningEvent(streamEvent) {
+    state.streamEventCount += 1;
+    state.streamConnected = true;
+    elements.streamConnectionState.textContent = "SSE 已连接";
+    if (streamEvent.type === "heartbeat") {
+        elements.progressDetail.textContent = streamEvent.detail || "连接正常，Agent 仍在工作。";
+        return;
+    }
+
     if (streamEvent.percent != null) {
         state.streamPercent = Math.max(state.streamPercent, streamEvent.percent);
+    } else if (streamEvent.type === "delta") {
+        state.streamPercent = Math.min(94, state.streamPercent + 0.15);
     } else if (streamEvent.type === "trace") {
         state.streamPercent = Math.min(95, state.streamPercent + 2);
     }
     elements.streamProgressBar.style.width = `${state.streamPercent}%`;
 
     if (streamEvent.type === "delta") {
-        const previous = state.streamDeltaByAgent.get(streamEvent.agent) || "";
-        const current = `${previous}${streamEvent.detail || ""}`;
-        state.streamDeltaByAgent.set(streamEvent.agent, current.slice(-260));
-        elements.streamDelta.textContent =
-            `${streamEvent.agent}：${state.streamDeltaByAgent.get(streamEvent.agent)}`;
+        upsertLiveAgentAnswer(streamEvent, false);
         return;
     }
 
     elements.progressTitle.textContent = streamEvent.title || "Agent 正在工作";
-    elements.progressDetail.textContent = streamEvent.detail || "";
+    elements.progressDetail.textContent = streamStatusDescription(streamEvent);
 
-    const item = document.createElement("div");
-    item.className = "stream-item";
-    const agent = document.createElement("b");
-    agent.textContent = streamEvent.agent || "系统";
-    const title = document.createElement("span");
-    title.textContent = `${streamEvent.phase || "Progress"} · ${streamEvent.title || ""}`;
-    item.append(agent, title);
-    elements.streamFeed.append(item);
-
-    while (elements.streamFeed.children.length > 8) {
-        elements.streamFeed.firstElementChild.remove();
+    if (isToolEvent(streamEvent)) {
+        appendToolChatMessage(elements.streamConversation, streamEvent);
+    } else if (streamEvent.phase === "FinalAnswer") {
+        upsertLiveAgentAnswer(streamEvent, true);
+    } else {
+        appendAgentChatMessage(elements.streamConversation, streamEvent);
     }
-    elements.streamFeed.scrollTop = elements.streamFeed.scrollHeight;
+    scrollConversationToEnd(elements.streamConversation);
 }
 
 function renderPlan() {
@@ -335,6 +386,18 @@ function renderOverview() {
                             <span class="hotel-price">${escapeHtml(item.category)}</span>
                         </div>
                     `).join("")}
+                </div>
+            </article>
+            <article class="result-card capability-card">
+                <p class="card-kicker">IMPLEMENTATION EVIDENCE</p>
+                <h3>项目能力运行证据</h3>
+                <div class="capability-grid">
+                    <div><b>SSE 流式输出</b><span>本次接收 ${state.streamEventCount} 个事件</span></div>
+                    <div><b>多 Agent 协作</b><span>${plan.agentContributions.length} 个角色完成分工</span></div>
+                    <div><b>工具调用</b><span>${plan.agentContributions.reduce((sum, item) => sum + item.toolCallCount, 0)} 次 Action / Observation</span></div>
+                    <div><b>MCP Server</b><span>${escapeHtml(state.systemStatus?.mcp?.endpoint || "/mcp")} · ${state.systemStatus?.mcp?.tools || 9} tools</span></div>
+                    <div><b>长期记忆</b><span>方案与用户偏好已写入 App_Data</span></div>
+                    <div><b>模型模式</b><span>${plan.modelMode === "deepseek" ? "DeepSeek API 在线推理" : "离线确定性降级"}</span></div>
                 </div>
             </article>
         </div>
@@ -472,34 +535,231 @@ function renderRisks() {
 function renderTrace() {
     const plan = state.plan;
     return `
-        <div class="trace-layout">
-            <aside class="trace-agents">
-                <p class="card-kicker">OBSERVABILITY</p>
-                <h3>Agent 执行概览</h3>
-                ${plan.agentContributions.map(agent => `
-                    <div class="trace-agent">
-                        <b>${escapeHtml(agent.agent)} · ${agent.toolCallCount} 次工具</b>
-                        <div class="markdown-body">${renderMarkdown(agent.summary)}</div>
-                    </div>
-                `).join("")}
-            </aside>
-            <div class="trace-timeline">
-                ${plan.trace.map(step => `
-                    <article class="trace-step">
-                        <span class="trace-marker ${step.phase.toLowerCase()}">${shortPhase(step.phase)}</span>
-                        <div class="trace-copy">
-                            <header>
-                                <b>${escapeHtml(step.agent)} · ${escapeHtml(step.phase)}</b>
-                                <time>${formatTime(step.timestamp)}</time>
-                            </header>
-                            <h4>${escapeHtml(step.title)}</h4>
-                            <p>${escapeHtml(step.detail)}</p>
-                        </div>
-                    </article>
-                `).join("")}
+        <div class="trace-chat-page">
+            <header class="trace-chat-heading">
+                <div>
+                    <p class="card-kicker">AGENT CONVERSATION</p>
+                    <h3>Agent 协作对话</h3>
+                </div>
+                <span>${plan.trace.length} 条消息 · ${plan.agentContributions.reduce((sum, item) => sum + item.toolCallCount, 0)} 次工具</span>
+            </header>
+            <div class="agent-conversation trace-conversation">
+                ${renderUserRequestMessage(plan.request)}
+                ${plan.trace.map(renderTraceChatEntry).join("")}
             </div>
         </div>
     `;
+}
+
+function upsertLiveAgentAnswer(streamEvent, finalized) {
+    const messageId = streamEvent.messageId || `answer-${streamEvent.agent}`;
+    const previous = state.streamTextByMessage.get(messageId) || "";
+    const content = finalized
+        ? (streamEvent.detail || previous)
+        : `${previous}${streamEvent.detail || ""}`;
+    state.streamTextByMessage.set(messageId, content);
+
+    let body = state.streamElementByMessage.get(messageId);
+    if (!body) {
+        const article = createAgentChatElement(streamEvent, "answer");
+        body = article.querySelector(".chat-message-body");
+        state.streamElementByMessage.set(messageId, body);
+        elements.streamConversation.append(article);
+    }
+    body.innerHTML = renderMarkdown(content || "正在组织回复…");
+    body.closest(".agent-chat-message")?.classList.toggle("is-streaming", !finalized);
+    scrollConversationToEnd(elements.streamConversation);
+}
+
+function appendUserChatMessage(container, text) {
+    const article = document.createElement("article");
+    article.className = "user-chat-message";
+    const label = document.createElement("span");
+    label.textContent = "你";
+    const body = document.createElement("p");
+    body.textContent = text;
+    article.append(label, body);
+    container.append(article);
+}
+
+function appendAgentChatMessage(container, streamEvent) {
+    const article = createAgentChatElement(streamEvent, streamEvent.phase?.toLowerCase() || "progress");
+    article.querySelector(".chat-message-body").innerHTML =
+        renderMarkdown(streamEvent.detail || streamEvent.title || "");
+    container.append(article);
+}
+
+function createAgentChatElement(streamEvent, variant) {
+    const article = document.createElement("article");
+    article.className = `agent-chat-message ${variant}`;
+    const avatar = document.createElement("span");
+    avatar.className = `chat-avatar ${agentClass(streamEvent.agent)}`;
+    avatar.textContent = agentInitial(streamEvent.agent);
+    const content = document.createElement("div");
+    content.className = "agent-chat-content";
+    const header = document.createElement("header");
+    const name = document.createElement("b");
+    name.textContent = streamEvent.agent || "系统";
+    const meta = document.createElement("span");
+    meta.textContent = `${phaseLabel(streamEvent.phase)} · ${formatTime(streamEvent.timestamp || new Date().toISOString())}`;
+    header.append(name, meta);
+    const body = document.createElement("div");
+    body.className = "chat-message-body markdown-body";
+    content.append(header, body);
+    article.append(avatar, content);
+    return article;
+}
+
+function appendToolChatMessage(container, streamEvent) {
+    const article = document.createElement("article");
+    const successClass = streamEvent.success === false ? "failed" : "";
+    article.className = `tool-chat-message ${streamEvent.phase.toLowerCase()} ${successClass}`;
+    const icon = document.createElement("span");
+    icon.className = "tool-chat-icon";
+    icon.textContent = streamEvent.phase === "Action" ? "↗" : streamEvent.success === false ? "!" : "✓";
+    const content = document.createElement("div");
+    const header = document.createElement("header");
+    const title = document.createElement("b");
+    title.textContent = streamEvent.phase === "Action"
+        ? `${streamEvent.agent} 调用 ${streamEvent.toolName || streamEvent.title.replace("调用 ", "")}`
+        : `${streamEvent.toolName || streamEvent.title.replace(" 返回结果", "")} 返回结果`;
+    const time = document.createElement("span");
+    time.textContent = formatTime(streamEvent.timestamp || new Date().toISOString());
+    header.append(title, time);
+    const details = document.createElement("details");
+    if (streamEvent.phase === "Action") details.open = true;
+    const summary = document.createElement("summary");
+    summary.textContent = streamEvent.phase === "Action" ? "查看调用参数" : "查看工具输出";
+    const pre = document.createElement("pre");
+    pre.textContent = prettyToolDetail(streamEvent.detail);
+    details.append(summary, pre);
+    content.append(header, details);
+    article.append(icon, content);
+    container.append(article);
+}
+
+function renderUserRequestMessage(request) {
+    const detail = `请规划从${request.departure}前往${request.destination}的${request.days}天旅行，`
+        + `${request.travelers}人，总预算${money(request.budget)}。`
+        + `${request.preferences ? `偏好：${request.preferences}。` : ""}`
+        + `${request.notes ? `补充要求：${request.notes}。` : ""}`;
+    return `<article class="user-chat-message"><span>你</span><p>${escapeHtml(detail)}</p></article>`;
+}
+
+function renderTraceChatEntry(step) {
+    if (isStoredToolTrace(step)) {
+        const toolName = step.title
+            .replace(/^调用\s+/, "")
+            .replace(/\s+返回结果$/, "")
+            .replace(/\s+调用失败$/, "");
+        return `
+            <article class="tool-chat-message ${step.phase.toLowerCase()}">
+                <span class="tool-chat-icon">${step.phase === "Action" ? "↗" : "✓"}</span>
+                <div>
+                    <header>
+                        <b>${escapeHtml(step.phase === "Action"
+                            ? `${step.agent} 调用 ${toolName}`
+                            : `${toolName} 返回结果`)}</b>
+                        <span>${formatTime(step.timestamp)}</span>
+                    </header>
+                    <details ${step.phase === "Action" ? "open" : ""}>
+                        <summary>${step.phase === "Action" ? "查看调用参数" : "查看工具输出"}</summary>
+                        <pre>${escapeHtml(prettyToolDetail(step.detail))}</pre>
+                    </details>
+                </div>
+            </article>
+        `;
+    }
+
+    return `
+        <article class="agent-chat-message ${step.phase.toLowerCase()}">
+            <span class="chat-avatar ${agentClass(step.agent)}">${agentInitial(step.agent)}</span>
+            <div class="agent-chat-content">
+                <header>
+                    <b>${escapeHtml(step.agent)}</b>
+                    <span>${phaseLabel(step.phase)} · ${formatTime(step.timestamp)}</span>
+                </header>
+                <div class="chat-message-body markdown-body">${renderMarkdown(step.detail)}</div>
+            </div>
+        </article>
+    `;
+}
+
+function isToolEvent(streamEvent) {
+    return Boolean(streamEvent.toolName)
+        && (streamEvent.phase === "Action" || streamEvent.phase === "Observation");
+}
+
+function streamStatusDescription(streamEvent) {
+    if (streamEvent.phase === "Action" && streamEvent.toolName) {
+        return `${streamEvent.agent} 正在调用 ${streamEvent.toolName} 获取可验证数据。`;
+    }
+    if (streamEvent.phase === "Observation" && streamEvent.toolName) {
+        return streamEvent.success === false
+            ? `${streamEvent.toolName} 调用失败，Agent 将根据已有信息继续处理。`
+            : `${streamEvent.toolName} 已返回结果，正在交给 ${streamEvent.agent} 整理。`;
+    }
+    if (streamEvent.phase === "FinalAnswer") {
+        return `${streamEvent.agent} 已提交专业结论。`;
+    }
+    return streamEvent.detail || "Agent 团队正在协作。";
+}
+
+function isStoredToolTrace(step) {
+    return (step.phase === "Action" && /^调用\s+/.test(step.title))
+        || (step.phase === "Observation"
+            && (/\s+返回结果$/.test(step.title) || /\s+调用失败$/.test(step.title)));
+}
+
+function prettyToolDetail(value) {
+    if (!value) return "无附加内容";
+    try {
+        return JSON.stringify(JSON.parse(value), null, 2);
+    } catch {
+        return value;
+    }
+}
+
+function agentInitial(agent) {
+    if (!agent || agent === "系统") return "系";
+    if (agent.includes("主控")) return "主";
+    if (agent.includes("行程")) return "行";
+    if (agent.includes("酒店")) return "住";
+    if (agent.includes("交通")) return "交";
+    if (agent.includes("预算")) return "预";
+    if (agent.includes("风险")) return "险";
+    if (agent.includes("记忆")) return "忆";
+    return agent.slice(0, 1);
+}
+
+function agentClass(agent = "") {
+    if (agent.includes("主控")) return "coordinator";
+    if (agent.includes("行程")) return "itinerary";
+    if (agent.includes("酒店")) return "hotel";
+    if (agent.includes("交通")) return "transport";
+    if (agent.includes("预算")) return "budget";
+    if (agent.includes("风险")) return "risk";
+    return "system";
+}
+
+function phaseLabel(phase) {
+    return {
+        Thought: "任务分析",
+        FinalAnswer: "Agent 回复",
+        Progress: "系统消息",
+        Start: "系统消息",
+        Connected: "连接成功",
+        Heartbeat: "连接心跳",
+        Memory: "长期记忆",
+        Completed: "已完成",
+        Model: "正在回复"
+    }[phase] || phase || "消息";
+}
+
+function scrollConversationToEnd(container) {
+    requestAnimationFrame(() => {
+        container.scrollTop = container.scrollHeight;
+    });
 }
 
 async function loadHistory() {
@@ -667,37 +927,99 @@ function renderMarkdown(value) {
     const escaped = escapeHtml(value || "");
     const lines = escaped.split(/\r?\n/);
     const output = [];
-    let inList = false;
-    for (const rawLine of lines) {
+    let listType = null;
+    let inCode = false;
+    let codeLines = [];
+    const closeList = () => {
+        if (listType) {
+            output.push(`</${listType}>`);
+            listType = null;
+        }
+    };
+
+    for (let index = 0; index < lines.length; index++) {
+        const rawLine = lines[index];
         const line = rawLine.trim();
-        if (/^[-*]\s+/.test(line)) {
-            if (!inList) {
-                output.push("<ul>");
-                inList = true;
+        if (line.startsWith("```")) {
+            closeList();
+            if (inCode) {
+                output.push(`<pre><code>${codeLines.join("\n")}</code></pre>`);
+                codeLines = [];
             }
-            output.push(`<li>${renderInlineMarkdown(line.replace(/^[-*]\s+/, ""))}</li>`);
+            inCode = !inCode;
             continue;
         }
-        if (inList) {
-            output.push("</ul>");
-            inList = false;
+        if (inCode) {
+            codeLines.push(rawLine);
+            continue;
         }
+
+        const nextLine = lines[index + 1]?.trim() || "";
+        if (line.includes("|") && /^\|?[\s:|-]+\|[\s:|-|]*$/.test(nextLine)) {
+            closeList();
+            const headers = markdownTableCells(line);
+            output.push("<div class=\"markdown-table-wrap\"><table><thead><tr>");
+            output.push(headers.map(cell => `<th>${renderInlineMarkdown(cell)}</th>`).join(""));
+            output.push("</tr></thead><tbody>");
+            index += 2;
+            while (index < lines.length && lines[index].includes("|") && lines[index].trim()) {
+                const cells = markdownTableCells(lines[index]);
+                output.push("<tr>");
+                output.push(cells.map(cell => `<td>${renderInlineMarkdown(cell)}</td>`).join(""));
+                output.push("</tr>");
+                index++;
+            }
+            output.push("</tbody></table></div>");
+            index--;
+            continue;
+        }
+
+        const unordered = line.match(/^[-*]\s+(.+)$/);
+        const ordered = line.match(/^\d+[.)]\s+(.+)$/);
+        if (unordered || ordered) {
+            const desiredType = ordered ? "ol" : "ul";
+            if (listType !== desiredType) {
+                closeList();
+                output.push(`<${desiredType}>`);
+                listType = desiredType;
+            }
+            output.push(`<li>${renderInlineMarkdown((unordered || ordered)[1])}</li>`);
+            continue;
+        }
+
+        closeList();
         if (!line) continue;
         const heading = line.match(/^(#{1,4})\s+(.+)$/);
         if (heading) {
             const level = Math.min(5, heading[1].length + 2);
             output.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
+        } else if (/^---+$/.test(line)) {
+            output.push("<hr>");
+        } else if (line.startsWith("&gt;")) {
+            output.push(`<blockquote>${renderInlineMarkdown(line.replace(/^&gt;\s?/, ""))}</blockquote>`);
         } else {
             output.push(`<p>${renderInlineMarkdown(line)}</p>`);
         }
     }
-    if (inList) output.push("</ul>");
+    closeList();
+    if (inCode) {
+        output.push(`<pre><code>${codeLines.join("\n")}</code></pre>`);
+    }
     return output.join("");
+}
+
+function markdownTableCells(line) {
+    return line
+        .replace(/^\|/, "")
+        .replace(/\|$/, "")
+        .split("|")
+        .map(cell => cell.trim());
 }
 
 function renderInlineMarkdown(value) {
     return value
         .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+        .replace(/~~(.+?)~~/g, "<del>$1</del>")
         .replace(/`([^`]+)`/g, "<code>$1</code>")
         .replace(/\[([^\]]+)]\((https?:\/\/[^)\s]+)\)/g,
             '<a href="$2" target="_blank" rel="noreferrer">$1</a>');

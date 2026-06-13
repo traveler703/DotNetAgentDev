@@ -12,16 +12,19 @@ public sealed class ItineraryAgent(AgentLoop loop)
         string? revisionInstruction = null) =>
         loop.RunAsync(
             "行程规划 Agent",
-            "结合联网资料、目的地、偏好与节奏设计具体到时段、交通、景点和餐饮的每日路线，避免重复和不合理绕路。",
+            "结合联网资料、目的地、偏好与节奏设计具体到时段、交通、真实命名景点和餐饮的每日路线。"
+            + "必须给出可在地图中搜索到的景点专名，按相邻区域组合并避免重复和不合理绕路。"
+            + "若目的地是国家或大区域，必须先选择适合本次天数与预算的核心城市，通常不超过3个，"
+            + "只有时间和预算明显充足时才可增加；后续景点、酒店和交通必须围绕已选城市。",
             new AgentTaskContext(
                 request,
                 revisionInstruction is null
-                    ? "联网查询景点、美食与交通时刻，确定候选体验和城市区域顺序"
+                    ? "联网查询真实景点、美食与交通时刻，列出具体专有名称、所在区域、建议游览时长和城市区域顺序"
                     : $"预算复核后的重新规划：{revisionInstruction}",
                 revisionInstruction is null
                     ? null
                     : new Dictionary<string, string> { ["revisionInstruction"] = revisionInstruction }),
-            ["preference_memory", "travel_web_research", "attraction_search", "route_sort"],
+            ["preference_memory", "route_sort", "travel_web_research", "attraction_search"],
             sequenceStart,
             cancellationToken,
             onProgress);
@@ -37,7 +40,9 @@ public sealed class HotelAgent(AgentLoop loop)
         string? revisionInstruction = null) =>
         loop.RunAsync(
             "酒店 Agent",
-            "根据总预算、城市与路线区域推荐交通方便且不会挤压核心行程费用的住宿。",
+            "根据总预算、已选核心城市与路线区域推荐交通方便且不会挤压核心行程费用的住宿。"
+            + "hotel_search 每轮最多调用一次；目的地包含多个核心城市时，必须把完整城市列表放在一次调用中，"
+            + "不要逐城重复调用，也不要输出任何工具协议标记。",
             new AgentTaskContext(
                 request,
                 revisionInstruction is null

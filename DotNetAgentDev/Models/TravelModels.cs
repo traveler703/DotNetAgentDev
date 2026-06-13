@@ -101,6 +101,16 @@ public sealed record AttractionCandidate(
     IReadOnlyList<string> Tags,
     double Score);
 
+public sealed record RoutePlan(
+    IReadOnlyList<RouteCityPlan> OrderedCities,
+    int ActivitiesPerDay,
+    string Strategy);
+
+public sealed record RouteCityPlan(
+    string City,
+    int RecommendedDays,
+    IReadOnlyList<string> Areas);
+
 public sealed record HotelRecommendation(
     string City,
     string Name,

@@ -63,21 +63,27 @@ public sealed class AgentLoop
         EmitTrace(onProgress, trace[0]);
         var observations = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var toolCallCount = 0;
+        var calledToolNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var sequence = sequenceStart + 1;
         var finalAnswer = string.Empty;
 
         for (var step = 0; step < _options.MaxSteps; step++)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var responseMessageId = $"{NormalizeId(agentName)}-response-{sequence}-{step}";
+            var remainingTools = tools
+                .Where(tool => !calledToolNames.Contains(tool.Name))
+                .ToList();
             var response = await _llmClient.CompleteStreamingAsync(
                 messages,
-                tools,
+                remainingTools,
                 delta => onProgress?.Invoke(new PlanningStreamEvent
                 {
                     Type = "delta",
+                    MessageId = responseMessageId,
                     Agent = agentName,
                     Phase = "Model",
-                    Title = "模型正在生成",
+                    Title = "正在回复",
                     Detail = delta
                 }),
                 cancellationToken);
@@ -92,7 +98,7 @@ public sealed class AgentLoop
                     "提交专业结论",
                     finalAnswer);
                 trace.Add(finalTrace);
-                EmitTrace(onProgress, finalTrace);
+                EmitTrace(onProgress, finalTrace, responseMessageId);
                 break;
             }
 
@@ -105,6 +111,26 @@ public sealed class AgentLoop
 
             foreach (var toolCall in response.ToolCalls)
             {
+                if (!calledToolNames.Add(toolCall.Name))
+                {
+                    var duplicateDetail = $"{toolCall.Name} 已在本轮执行过，系统跳过重复调用并要求 Agent 使用已有结果。";
+                    var duplicateTrace = CreateTrace(
+                        sequence++,
+                        agentName,
+                        "Observation",
+                        "跳过重复工具调用",
+                        duplicateDetail);
+                    trace.Add(duplicateTrace);
+                    EmitTrace(onProgress, duplicateTrace);
+                    messages.Add(new ChatMessage
+                    {
+                        Role = "tool",
+                        ToolCallId = toolCall.Id,
+                        Content = JsonSerializer.Serialize(new { notice = duplicateDetail }, JsonOptions)
+                    });
+                    continue;
+                }
+
                 var actionTrace = CreateTrace(
                     sequence++,
                     agentName,
@@ -112,7 +138,12 @@ public sealed class AgentLoop
                     $"调用 {toolCall.Name}",
                     SummarizeArguments(toolCall.Arguments));
                 trace.Add(actionTrace);
-                EmitTrace(onProgress, actionTrace);
+                EmitTrace(
+                    onProgress,
+                    actionTrace,
+                    toolCall.Id,
+                    toolCall.Name,
+                    null);
 
                 var result = await _toolRegistry.ExecuteAsync(
                     toolCall.Name,
@@ -128,7 +159,12 @@ public sealed class AgentLoop
                     result.Success ? $"{toolCall.Name} 返回结果" : $"{toolCall.Name} 调用失败",
                     SummarizeObservation(result));
                 trace.Add(observationTrace);
-                EmitTrace(onProgress, observationTrace);
+                EmitTrace(
+                    onProgress,
+                    observationTrace,
+                    toolCall.Id,
+                    toolCall.Name,
+                    result.Success);
 
                 messages.Add(new ChatMessage
                 {
@@ -175,8 +211,12 @@ public sealed class AgentLoop
          你是多 Agent 旅游规划系统中的 {agentName}。
          职责：{responsibility}
          你必须基于工具结果工作，不得编造实时价格、天气或政策。
+         涉及景点、地标、商圈、博物馆、公园或餐饮区域时，必须使用真实、具体、可搜索的专有名称。
+         严禁使用“城市历史博物馆”“老城步行街”“城市中央公园”“本地市场美食体验”
+         “城市观景台”等通用占位名称。工具资料不足时必须明确写“需联网确认”，不能虚构名称。
          请依次调用完成任务所需的工具：{string.Join("、", allowedTools)}。
-         工具调用结束后，只输出简短、可核验的专业结论。不要输出私有思维链。
+         每个工具在一次子任务中最多调用一次；已有工具结果足够时必须直接提交结论，禁止反复查询同一工具。
+         工具调用结束后，以 Markdown 输出简洁、可核验的专业结论。不要输出私有思维链。
          """;
 
     private static string BuildUserPrompt(AgentTaskContext context)
@@ -203,16 +243,25 @@ public sealed class AgentLoop
 
     private static void EmitTrace(
         Action<PlanningStreamEvent>? onProgress,
-        AgentTraceStep trace) =>
+        AgentTraceStep trace,
+        string? messageId = null,
+        string? toolName = null,
+        bool? success = null) =>
         onProgress?.Invoke(new PlanningStreamEvent
         {
             Type = "trace",
+            MessageId = messageId,
             Agent = trace.Agent,
             Phase = trace.Phase,
             Title = trace.Title,
             Detail = trace.Detail,
+            ToolName = toolName,
+            Success = success,
             Timestamp = trace.Timestamp
         });
+
+    private static string NormalizeId(string value) =>
+        string.Concat(value.Select(character => char.IsLetterOrDigit(character) ? character : '-'));
 
     private static string SummarizeArguments(string arguments)
     {

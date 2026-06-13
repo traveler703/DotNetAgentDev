@@ -18,6 +18,7 @@ public sealed class TravelCoordinatorTests
     public async Task PlanAsync_ReplansWhenInitialTotalExceedsBudgetByMoreThanTenPercent()
     {
         var coordinator = CreateCoordinator();
+        var streamEvents = new List<PlanningStreamEvent>();
         var plan = await coordinator.PlanAsync(
             new TravelRequest
             {
@@ -31,7 +32,8 @@ public sealed class TravelCoordinatorTests
                 Preferences = "美食、人文、自然风光",
                 Pace = TravelPace.Relaxed
             },
-            CancellationToken.None);
+            CancellationToken.None,
+            streamEvents.Add);
 
         Assert.Equal(1, plan.PlanningRevisionCount);
         Assert.Contains(plan.Trace, step => step.Title == "预算超限，启动第二轮规划");
@@ -41,6 +43,58 @@ public sealed class TravelCoordinatorTests
             activity => activity.Category == "餐饮" && activity.EndTime.Length > 0);
         Assert.Contains(plan.ExpenseDetails, detail => detail.Category == "transport");
         Assert.Contains(plan.ExpenseDetails, detail => detail.Category == "food");
+        Assert.Contains(
+            plan.Days.SelectMany(day => day.Activities),
+            activity => activity.Name is "台北101观景台" or "台北故宫博物院" or "中正纪念堂");
+        Assert.DoesNotContain(
+            plan.Days.SelectMany(day => day.Activities),
+            activity => activity.Name.Contains("城市历史博物馆")
+                        || activity.Name.Contains("老城步行街")
+                        || activity.Name.Contains("城市中央公园"));
+        Assert.All(
+            streamEvents.Where(item => item.Type == "delta"),
+            item => Assert.False(string.IsNullOrWhiteSpace(item.MessageId)));
+        Assert.All(
+            streamEvents.Where(item => item.Phase == "Action" && item.Title.StartsWith("调用 ")),
+            item => Assert.False(string.IsNullOrWhiteSpace(item.ToolName)));
+        Assert.All(
+            streamEvents.Where(item => item.Phase == "Observation" && item.Title.EndsWith("返回结果")),
+            item => Assert.NotNull(item.Success));
+    }
+
+    [Fact]
+    public async Task PlanAsync_UsesSelectedCitiesAndNamedPlaces_ForBroadDestination()
+    {
+        var plan = await CreateCoordinator().PlanAsync(
+            new TravelRequest
+            {
+                UserId = "vietnam-test",
+                Departure = "上海",
+                Destination = "越南",
+                StartDate = new DateOnly(2026, 8, 10),
+                Days = 7,
+                Travelers = 1,
+                Budget = 12000,
+                Preferences = "人文、美食、城市漫步",
+                Pace = TravelPace.Balanced
+            },
+            CancellationToken.None);
+
+        Assert.Equal(["河内", "岘港"], plan.Days.Select(day => day.City).Distinct());
+        Assert.Contains(
+            plan.Days.SelectMany(day => day.Activities),
+            activity => activity.Name is "还剑湖与玉山祠" or "会安古城");
+        Assert.DoesNotContain(
+            plan.Days.SelectMany(day => day.Activities),
+            activity => activity.Name.Contains("需联网确认"));
+        Assert.All(plan.Hotels, hotel => Assert.Contains(hotel.City, new[] { "河内", "岘港" }));
+        Assert.True(plan.Transport.IntercityCost > 0);
+        var routeSelectedAt = plan.Trace.ToList().FindIndex(step =>
+            step.Phase == "Observation" && step.Title == "route_sort 返回结果");
+        var hotelStartedAt = plan.Trace.ToList().FindIndex(step =>
+            step.Agent == "酒店 Agent" && step.Phase == "Thought");
+        Assert.True(routeSelectedAt >= 0);
+        Assert.True(hotelStartedAt > routeSelectedAt);
     }
 
     private static TravelCoordinatorAgent CreateCoordinator()

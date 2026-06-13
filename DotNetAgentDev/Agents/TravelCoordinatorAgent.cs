@@ -51,26 +51,30 @@ public sealed class TravelCoordinatorAgent
                 $"从{request.Departure}前往{request.Destination}，{request.Days}天，"
                 + $"{request.Travelers}人，预算{request.Budget:F0}元，节奏为{PaceText(request.Pace)}。"),
             Trace(2, "主控 Agent", "Action", "拆分专业子任务",
-                "并行委派行程、酒店、交通与风险 Agent，待事实数据返回后再执行预算 Agent。")
+                "先由行程 Agent 选择核心城市，并与风险 Agent 并行工作；城市确定后再并行启动酒店与交通 Agent。")
         };
         EmitProgress(onProgress, "trace", coordinatorTrace[0], 5);
         EmitProgress(onProgress, "trace", coordinatorTrace[1], 10);
 
         var itineraryTask = _itineraryAgent.RunAsync(request, 10, cancellationToken, onProgress);
-        var hotelTask = _hotelAgent.RunAsync(request, 100, cancellationToken, onProgress);
-        var transportTask = _transportAgent.RunAsync(request, 200, cancellationToken, onProgress);
         var riskTask = _riskAgent.RunAsync(request, 300, cancellationToken, onProgress);
-        await Task.WhenAll(itineraryTask, hotelTask, transportTask, riskTask);
-
         var itineraryRun = await itineraryTask;
+        var routePlan = ParseRoutePlan(itineraryRun);
+        var scopedRequest = ApplyRouteScope(request, routePlan);
+        var hotelTask = _hotelAgent.RunAsync(scopedRequest, 100, cancellationToken, onProgress);
+        var transportTask = _transportAgent.RunAsync(scopedRequest, 200, cancellationToken, onProgress);
+        await Task.WhenAll(hotelTask, transportTask, riskTask);
+
         var hotelRun = await hotelTask;
         var transportRun = await transportTask;
         var riskRun = await riskTask;
 
         var destinations = await _catalog.FindDestinationsAsync(request.Destination);
         var attractions = ParseAttractions(itineraryRun) ?? BuildFallbackAttractions(request, destinations);
+        attractions = FilterAttractionsForRoute(attractions, routePlan);
         var hotels = ParseHotels(hotelRun) ?? BuildFallbackHotels(request, destinations);
         var transport = ParseTransport(transportRun) ?? BuildFallbackTransport(request, destinations);
+        transport = ApplyRouteToTransport(transport, routePlan, request.Travelers);
         var research = MergeResearch(
             ParseWebResearch(itineraryRun),
             ParseWebResearch(transportRun));
@@ -81,6 +85,7 @@ public sealed class TravelCoordinatorAgent
             startDate,
             transport,
             research,
+            routePlan,
             budgetRevision: false);
         var selectedHotels = SelectHotels(hotels, days, request, budgetRevision: false);
         var expenseDetails = BuildExpenseDetails(request, days, selectedHotels);
@@ -132,34 +137,37 @@ public sealed class TravelCoordinatorAgent
             coordinatorTrace.Add(revisionTrace);
             EmitProgress(onProgress, "trace", revisionTrace, 78);
 
-            var revisedItineraryTask = _itineraryAgent.RunAsync(
+            itineraryRun = await _itineraryAgent.RunAsync(
                 request,
                 510,
                 cancellationToken,
                 onProgress,
                 revisionInstruction);
+            routePlan = ParseRoutePlan(itineraryRun) ?? routePlan;
+            scopedRequest = ApplyRouteScope(request, routePlan);
             var revisedHotelTask = _hotelAgent.RunAsync(
-                request,
+                scopedRequest,
                 610,
                 cancellationToken,
                 onProgress,
                 revisionInstruction);
             var revisedTransportTask = _transportAgent.RunAsync(
-                request,
+                scopedRequest,
                 710,
                 cancellationToken,
                 onProgress,
                 revisionInstruction);
-            await Task.WhenAll(revisedItineraryTask, revisedHotelTask, revisedTransportTask);
+            await Task.WhenAll(revisedHotelTask, revisedTransportTask);
 
-            itineraryRun = await revisedItineraryTask;
             hotelRun = await revisedHotelTask;
             transportRun = await revisedTransportTask;
             attractions = ParseAttractions(itineraryRun) ?? attractions;
+            attractions = FilterAttractionsForRoute(attractions, routePlan);
             hotels = ParseHotels(hotelRun) ?? hotels;
             transport = OptimizeTransportForBudget(
                 ParseTransport(transportRun) ?? transport,
                 request);
+            transport = ApplyRouteToTransport(transport, routePlan, request.Travelers);
             research = MergeResearch(
                 ParseWebResearch(itineraryRun),
                 ParseWebResearch(transportRun));
@@ -170,6 +178,7 @@ public sealed class TravelCoordinatorAgent
                 startDate,
                 transport,
                 research,
+                routePlan,
                 budgetRevision: true);
             selectedHotels = SelectHotels(hotels, days, request, budgetRevision: true);
             expenseDetails = BuildExpenseDetails(request, days, selectedHotels);
@@ -300,6 +309,51 @@ public sealed class TravelCoordinatorAgent
         using var document = JsonDocument.Parse(json);
         return document.RootElement.GetProperty("candidates")
             .Deserialize<List<AttractionCandidate>>(JsonOptions);
+    }
+
+    private static RoutePlan? ParseRoutePlan(AgentRunResult run)
+    {
+        if (!run.Observations.TryGetValue("route_sort", out var json))
+        {
+            return null;
+        }
+
+        return JsonSerializer.Deserialize<RoutePlan>(json, JsonOptions);
+    }
+
+    private static TravelRequest ApplyRouteScope(TravelRequest request, RoutePlan? routePlan)
+    {
+        if (routePlan is null || routePlan.OrderedCities.Count == 0)
+        {
+            return request;
+        }
+
+        var cities = string.Join("、", routePlan.OrderedCities.Select(city => city.City));
+        return request with
+        {
+            Destination = $"{request.Destination}（核心城市：{cities}）",
+            Notes = string.IsNullOrWhiteSpace(request.Notes)
+                ? $"核心城市已确定为：{cities}。"
+                : $"{request.Notes}；核心城市已确定为：{cities}。"
+        };
+    }
+
+    private static IReadOnlyList<AttractionCandidate> FilterAttractionsForRoute(
+        IReadOnlyList<AttractionCandidate> attractions,
+        RoutePlan? routePlan)
+    {
+        if (routePlan is null || routePlan.OrderedCities.Count == 0)
+        {
+            return attractions;
+        }
+
+        var cities = routePlan.OrderedCities
+            .Select(city => city.City)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var filtered = attractions
+            .Where(candidate => cities.Contains(candidate.City))
+            .ToList();
+        return filtered.Count > 0 ? filtered : attractions;
     }
 
     private static IReadOnlyList<HotelRecommendation>? ParseHotels(AgentRunResult run)
@@ -570,6 +624,28 @@ public sealed class TravelCoordinatorAgent
         };
     }
 
+    private static TransportSummary ApplyRouteToTransport(
+        TransportSummary transport,
+        RoutePlan? routePlan,
+        int travelers)
+    {
+        var cityCount = routePlan?.OrderedCities.Count ?? 0;
+        if (cityCount <= 1 || transport.IntercityCost > 0)
+        {
+            return transport;
+        }
+
+        var cityNames = string.Join(" → ", routePlan!.OrderedCities.Select(city => city.City));
+        return transport with
+        {
+            IntercityCost = (cityCount - 1) * 360m * Math.Max(1, travelers),
+            EstimatedTravelMinutes = transport.EstimatedTravelMinutes + (cityCount - 1) * 180,
+            RouteNotes = transport.RouteNotes
+                .Append($"已按行程 Agent 选择的城市顺序安排跨城交通：{cityNames}。")
+                .ToList()
+        };
+    }
+
     private static IReadOnlyList<WebResearchItem> GetResearchResults(
         WebResearchReport? report,
         string topic) =>
@@ -622,20 +698,34 @@ public sealed class TravelCoordinatorAgent
         string city,
         string destination)
     {
-        var value = $"{destination}{city}";
-        if (value.Contains("日本") || value.Contains("东京") || value.Contains("京都") || value.Contains("大阪"))
+        var value = $"{destination}{city}".ToLowerInvariant();
+        if (value.Contains("日本") || value.Contains("东京") || value.Contains("京都")
+            || value.Contains("大阪") || value.Contains("japan") || value.Contains("tokyo")
+            || value.Contains("kyoto") || value.Contains("osaka"))
         {
             return ("饭团、味噌汤或玉子烧", "寿司、荞麦面或当地定食", "拉面、烧鸟或大阪烧");
         }
 
-        if (value.Contains("台湾") || value.Contains("台北") || value.Contains("高雄"))
+        if (value.Contains("台湾") || value.Contains("台北") || value.Contains("高雄")
+            || value.Contains("taiwan") || value.Contains("taipei"))
         {
             return ("蛋饼、饭团与豆浆", "牛肉面或卤肉饭", "夜市小吃、盐酥鸡与珍珠奶茶");
         }
 
-        if (value.Contains("新加坡"))
+        if (value.Contains("香港") || value.Contains("hong kong") || value.Contains("hongkong"))
+        {
+            return ("菠萝油、沙嗲牛肉面与港式奶茶", "云吞面、烧味饭或港式点心", "避风塘海鲜、煲仔饭或庙街小吃");
+        }
+
+        if (value.Contains("新加坡") || value.Contains("singapore"))
         {
             return ("咖椰吐司与南洋咖啡", "海南鸡饭或叻沙", "熟食中心沙爹与海鲜");
+        }
+
+        if (value.Contains("越南") || value.Contains("河内") || value.Contains("岘港")
+            || value.Contains("胡志明") || value.Contains("vietnam"))
+        {
+            return ("越南法棍、河粉与滴漏咖啡", "越南河粉、烤肉米线或鸡饭", "春卷、海鲜、越式火锅或街头小吃");
         }
 
         if (value.Contains("成都"))
@@ -651,6 +741,36 @@ public sealed class TravelCoordinatorAgent
         return ("当地早餐与咖啡", "当地代表性主食或套餐", "本地特色菜与夜间小吃");
     }
 
+    private static IReadOnlyList<string> BuildCitySchedule(
+        IReadOnlyList<string> cities,
+        RoutePlan? routePlan,
+        int days)
+    {
+        var schedule = new List<string>(days);
+        if (routePlan is not null)
+        {
+            foreach (var city in routePlan.OrderedCities)
+            {
+                schedule.AddRange(Enumerable.Repeat(city.City, Math.Max(1, city.RecommendedDays)));
+            }
+        }
+
+        if (schedule.Count == 0)
+        {
+            for (var index = 0; index < days; index++)
+            {
+                schedule.Add(cities[Math.Min(cities.Count - 1, index * cities.Count / days)]);
+            }
+        }
+
+        while (schedule.Count < days)
+        {
+            schedule.Add(schedule[^1]);
+        }
+
+        return schedule.Take(days).ToList();
+    }
+
     private static IReadOnlyList<DayPlan> BuildDailyPlan(
         TravelRequest request,
         IReadOnlyList<AttractionCandidate> attractions,
@@ -658,6 +778,7 @@ public sealed class TravelCoordinatorAgent
         DateOnly startDate,
         TransportSummary transport,
         WebResearchReport? research,
+        RoutePlan? routePlan,
         bool budgetRevision)
     {
         var activitiesPerDay = request.Pace switch
@@ -671,11 +792,27 @@ public sealed class TravelCoordinatorAgent
             activitiesPerDay = Math.Max(1, activitiesPerDay - 1);
         }
 
-        var cities = destinations.Select(destination => destination.City).Distinct().ToList();
+        var cities = routePlan?.OrderedCities
+            .Select(city => city.City)
+            .Distinct()
+            .ToList()
+            ?? [];
+        if (cities.Count == 0)
+        {
+            cities.AddRange(destinations.Select(destination => destination.City).Distinct());
+        }
+        if (cities.Count == 0)
+        {
+            cities.AddRange(attractions
+                .Where(candidate => !string.IsNullOrWhiteSpace(candidate.City))
+                .Select(candidate => candidate.City)
+                .Distinct());
+        }
         if (cities.Count == 0)
         {
             cities.Add(request.Destination);
         }
+        var citySchedule = BuildCitySchedule(cities, routePlan, request.Days);
 
         var cityQueues = cities.ToDictionary(
             city => city,
@@ -683,7 +820,9 @@ public sealed class TravelCoordinatorAgent
                 attractions.Where(candidate => candidate.City == city)
                     .OrderBy(candidate => budgetRevision ? candidate.TicketPrice : 0)
                     .ThenByDescending(candidate => candidate.Score)));
-        var unused = new Queue<AttractionCandidate>(attractions.OrderByDescending(item => item.Score));
+        var unused = new Queue<AttractionCandidate>(
+            attractions.Where(item => cities.Contains(item.City))
+                .OrderByDescending(item => item.Score));
         var days = new List<DayPlan>();
         var itinerarySources = GetResearchResults(research, "itinerary");
         var foodSources = GetResearchResults(research, "food");
@@ -692,8 +831,8 @@ public sealed class TravelCoordinatorAgent
         var intercityTransitions = Enumerable.Range(1, request.Days - 1)
             .Count(index =>
             {
-                var previousCity = cities[Math.Min(cities.Count - 1, (index - 1) * cities.Count / request.Days)];
-                var currentCity = cities[Math.Min(cities.Count - 1, index * cities.Count / request.Days)];
+                var previousCity = citySchedule[index - 1];
+                var currentCity = citySchedule[index];
                 return previousCity != currentCity;
             });
         var intercityPerTransition = intercityTransitions == 0
@@ -702,8 +841,7 @@ public sealed class TravelCoordinatorAgent
 
         for (var index = 0; index < request.Days; index++)
         {
-            var cityIndex = Math.Min(cities.Count - 1, index * cities.Count / request.Days);
-            var city = cities[cityIndex];
+            var city = citySchedule[index];
             var count = activitiesPerDay;
             if (index == 0 || index == request.Days - 1)
             {
@@ -749,7 +887,7 @@ public sealed class TravelCoordinatorAgent
             var activities = new List<TravelActivity>();
             var previousCity = index == 0
                 ? city
-                : cities[Math.Min(cities.Count - 1, (index - 1) * cities.Count / request.Days)];
+                : citySchedule[index - 1];
             if (index == 0)
             {
                 var outboundCost = request.Days == 1
@@ -925,11 +1063,12 @@ public sealed class TravelCoordinatorAgent
         var cities = days.Select(day => day.City).Distinct();
         return cities.Select(city =>
             {
-                var candidate = hotels.Where(hotel => hotel.City == city)
+                var cityCandidate = hotels.Where(hotel => hotel.City == city)
                                     .OrderBy(hotel => hotel.PricePerNight > nightlyBudget)
                                     .ThenBy(hotel => budgetRevision ? hotel.PricePerNight : 0)
                                     .ThenByDescending(hotel => hotel.Score)
-                                    .FirstOrDefault()
+                                    .FirstOrDefault();
+                var candidate = cityCandidate
                                 ?? hotels.OrderBy(hotel => hotel.PricePerNight > nightlyBudget)
                                     .ThenBy(hotel => budgetRevision ? hotel.PricePerNight : 0)
                                     .ThenByDescending(hotel => hotel.Score)
@@ -946,7 +1085,15 @@ public sealed class TravelCoordinatorAgent
                         8.0);
                 }
 
-                return candidate;
+                return cityCandidate is not null
+                    ? candidate
+                    : candidate with
+                    {
+                        City = city,
+                        Name = $"{city}公共交通附近住宿",
+                        Area = "核心线路公共交通站点周边",
+                        Reason = "住宿工具未返回该城市的具体房源，按同档预算生成城市级筛选条件，预订前需再次查询。"
+                    };
             })
             .DistinctBy(hotel => hotel.Name)
             .ToList();

@@ -8,6 +8,7 @@ using DotNetAgentDev.Models;
 using DotNetAgentDev.Options;
 using DotNetAgentDev.Services;
 using DotNetAgentDev.Tools;
+using Microsoft.AspNetCore.Http.Features;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -80,7 +81,15 @@ await app.Services.GetRequiredService<PlanningMemoryStore>()
     .NormalizeStoredJsonAsync(CancellationToken.None);
 
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = context =>
+    {
+        context.Context.Response.Headers.CacheControl = "no-cache, no-store, must-revalidate";
+        context.Context.Response.Headers.Pragma = "no-cache";
+        context.Context.Response.Headers.Expires = "0";
+    }
+});
 
 app.MapGet("/api/status", (
     IConfiguration configuration,
@@ -144,6 +153,23 @@ app.MapPost("/api/plans/stream", async (
     response.ContentType = "text/event-stream; charset=utf-8";
     response.Headers.CacheControl = "no-cache, no-transform";
     response.Headers.Append("X-Accel-Buffering", "no");
+    response.HttpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
+
+    await response.StartAsync(cancellationToken);
+    await response.WriteAsync($": connected {new string(' ', 2048)}\n\n", cancellationToken);
+    await WriteStreamEventAsync(
+        response,
+        new PlanningStreamEvent
+        {
+            Type = "connected",
+            Agent = "系统",
+            Phase = "Connected",
+            Title = "SSE 流式连接已建立",
+            Detail = "服务器已关闭响应缓冲，正在启动多 Agent 协作。",
+            Percent = 1
+        },
+        streamJsonOptions,
+        cancellationToken);
 
     var channel = Channel.CreateUnbounded<PlanningStreamEvent>(
         new UnboundedChannelOptions
@@ -156,16 +182,21 @@ app.MapPost("/api/plans/stream", async (
         service,
         channel.Writer,
         cancellationToken);
+    var heartbeat = ProduceHeartbeatEventsAsync(
+        channel.Writer,
+        producer,
+        cancellationToken);
 
     await foreach (var streamEvent in channel.Reader.ReadAllAsync(cancellationToken))
     {
-        var json = JsonSerializer.Serialize(streamEvent, streamJsonOptions);
-        await response.WriteAsync($"event: {streamEvent.Type}\n", cancellationToken);
-        await response.WriteAsync($"data: {json}\n\n", cancellationToken);
-        await response.Body.FlushAsync(cancellationToken);
+        await WriteStreamEventAsync(
+            response,
+            streamEvent,
+            streamJsonOptions,
+            cancellationToken);
     }
 
-    await producer;
+    await Task.WhenAll(producer, heartbeat);
 });
 
 app.MapGet("/api/plans", async (
@@ -207,16 +238,6 @@ static async Task ProducePlanEventsAsync(
 {
     try
     {
-        writer.TryWrite(new PlanningStreamEvent
-        {
-            Type = "progress",
-            Agent = "系统",
-            Phase = "Start",
-            Title = "流式规划已启动",
-            Detail = "服务器已建立 SSE 通道，正在启动多 Agent 协作。",
-            Percent = 1
-        });
-
         var plan = await service.CreatePlanAsync(
             request,
             cancellationToken,
@@ -251,6 +272,49 @@ static async Task ProducePlanEventsAsync(
     {
         writer.TryComplete();
     }
+}
+
+static async Task ProduceHeartbeatEventsAsync(
+    ChannelWriter<PlanningStreamEvent> writer,
+    Task producer,
+    CancellationToken cancellationToken)
+{
+    try
+    {
+        while (!producer.IsCompleted)
+        {
+            var delay = Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+            if (await Task.WhenAny(producer, delay) == producer)
+            {
+                break;
+            }
+
+            writer.TryWrite(new PlanningStreamEvent
+            {
+                Type = "heartbeat",
+                Agent = "系统",
+                Phase = "Heartbeat",
+                Title = "Agent 团队仍在规划",
+                Detail = "连接正常，模型推理或工具查询仍在进行。"
+            });
+        }
+    }
+    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+    {
+        // The request ended while the heartbeat timer was waiting.
+    }
+}
+
+static async Task WriteStreamEventAsync(
+    HttpResponse response,
+    PlanningStreamEvent streamEvent,
+    JsonSerializerOptions jsonOptions,
+    CancellationToken cancellationToken)
+{
+    var json = JsonSerializer.Serialize(streamEvent, jsonOptions);
+    await response.WriteAsync($"event: {streamEvent.Type}\n", cancellationToken);
+    await response.WriteAsync($"data: {json}\n\n", cancellationToken);
+    await response.Body.FlushAsync(cancellationToken);
 }
 
 public partial class Program;
