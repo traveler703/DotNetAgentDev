@@ -12,16 +12,17 @@
 - 手写 `Thought → Action → Observation → Final Answer` ReAct 循环。
 - 主控 Agent + 行程、酒店、交通、预算、风险 5 个专业 Agent。
 - 9 个带 JSON Schema 的自定义工具。
-- 当前会话工作记忆 + JSON 文件长期偏好记忆。
-- 本地旅游知识库，覆盖日本东京/京都/大阪、杭州、成都和新加坡。
-- DeepSeek HTTP 客户端、自动工具调用、错误降级与日志。
+- 当前会话工作记忆 + JSON 文件长期用户画像，记录旅行节奏、偏好、备注约束和历史日均预算。
+- 本地旅游知识库作为离线兜底的回退性资料，覆盖部分旅游城市的景点、住宿、签证等信息。
+- DeepSeek HTTP 客户端、自动工具调用、错误降级与 `.log` 文件运行日志。
 - DeepSeek 原生流式响应 + Web SSE 实时推送，生成期间以聊天形式展示 Agent 回复、工具调用和返回结果。
 - 官方 MCP C# SDK + Streamable HTTP 服务，复用 9 个旅游工具。
 - 联网旅游研究工具，按主题检索景点、美食、交通、签证、天气、灾害和治安，并保留来源链接。
 - 预算超过用户预算 10% 时，自动触发行程、酒店、交通和预算 Agent 的第二轮规划。
+- Agent 轨迹页支持输入后续修改要求，系统基于上一版方案重新运行 Agent 团队并保存新版本。
 - Web 端以聊天记录形式回放 Agent 执行轨迹，不展示或伪造模型私有思维链。
-- 香港、台湾等目的地提供真实命名景点候选，禁止使用“城市博物馆”等虚构占位名称。
-- xUnit 单元测试与响应式界面。
+- 大范围目的地会先选择核心城市。
+- 23 个 xUnit 单元测试与响应式界面。
 
 ## 快速开始
 
@@ -77,6 +78,7 @@ dotnet run --project DotNetAgentDev/DotNetAgentDev.csproj
 3. 在加载界面实时查看模型增量、Agent 阶段、工具行动与进度。
 4. 在方案总览、每日行程、预算交通、风险提醒、Agent 轨迹间切换。
 5. 点击右上角“历史方案”，查看长期记忆保存的计划与偏好。
+6. 在 Agent 轨迹页底部输入修改要求，例如增加/删除景点、调整到第几天上午/下午/晚上，系统会重新运行 Agent 团队并保存新方案。
 
 推荐演示输入：
 
@@ -136,30 +138,32 @@ DotNetAgentDev/
 ├── DotNetAgentDev/
 │   ├── Agents/          # ReAct 循环、专业 Agent、主控 Agent
 │   ├── Data/            # 本地旅游知识库
-│   ├── Infrastructure/  # JSON 记忆与数据读取
+│   ├── Infrastructure/  # JSON 记忆、数据读取、.env 加载与文件日志
 │   ├── Llm/             # DeepSeek 与离线模型客户端
 │   ├── Mcp/             # MCP 工具适配层
 │   ├── Models/          # 领域模型和 API 契约
-│   ├── Services/        # 应用服务
+│   ├── Services/        # 新建计划与修订计划应用服务
 │   ├── Tools/           # 9 个自定义工具与注册表
 │   └── wwwroot/         # Web 界面
 ├── DotNetAgentDev.Tests/
 └── docs/
 ```
 
-运行时计划保存在 `DotNetAgentDev/App_Data/`，该目录已加入 `.gitignore`，不会提交用户历史数据。
+运行时计划、用户画像和日志保存在 `DotNetAgentDev/App_Data/`，该目录已加入 `.gitignore`，不会提交用户历史数据。
 
 ## 流式输出
 
 前端默认调用 `POST /api/plans/stream`。该端点使用 `text/event-stream` 返回：
 
+- `connected`：SSE 连接已经建立。
 - `progress`：系统阶段和保存进度。
 - `trace`：Thought、Action、Observation、Final Answer 摘要。
 - `delta`：DeepSeek 文本增量。
+- `heartbeat`：长时间规划期间的连接心跳。
 - `completed`：包含最终完整 `TravelPlan`。
 - `error`：流式执行错误。
 
-原有 `POST /api/plans` 仍保留，用于不支持流式读取的客户端。
+原有 `POST /api/plans` 仍保留，用于不支持流式读取的客户端。Agent 轨迹页的后续修改功能调用 `POST /api/plans/{id}/revise/stream`，复用同一套 SSE 流式链路并在完成后保存新的 `TravelPlan`。
 
 ## MCP Server
 
@@ -193,24 +197,23 @@ risk_check           preference_memory   travel_web_research
 ```
 
 服务采用无状态模式，适合本项目只读查询工具；MCP 工具均标记为
-`readOnly`、`idempotent`、非破坏性和封闭数据域。`/api/status` 会返回 MCP
-是否启用、端点、传输类型和工具数量。
+`readOnly`、`idempotent` 和非破坏性。8 个本地查询、记忆读取和确定性计算工具属于封闭数据域；`travel_web_research` 会执行联网检索，属于开放数据域。`/api/status` 会返回 MCP 是否启用、端点、传输类型和工具数量。
 
 ## 安全与数据说明
 
 - API Key 只能通过环境变量或本地配置注入，不得提交到 Git。
 - MCP 默认面向本机客户端，`AllowedHosts` 仅允许本地回环地址。
-- 联网搜索摘要不是预订确认或官方实时结论，签证、灾害和交通班次必须打开来源复核。
-- 本地旅游价格和季节天气为课程演示数据，不是实时结论。
+- 联网搜索摘要不保证获取到官方实时结论，签证、灾害和交通班次必须打开来源复核。
+- `Data/tourism-data.json` 是离线兜底回退性资料，不是完整旅游数据库。
 - DeepSeek 不可用时自动降级，不会让整次规划直接失败。
 - 所有输入先做边界校验；工具异常会转换为 Observation，由 Agent 继续处理。
+- 运行日志写入 `DotNetAgentDev/App_Data/logs/*.log`；历史计划、用户画像和日志均属于运行时数据。
 
 ## 课程交付文档
 
 - [架构设计文档](docs/架构设计.md)
 - [反思报告](docs/反思报告.md)
-- [答辩与演示脚本](docs/答辩演示.md)
-- [课程要求实现对照](docs/课程要求实现对照.md)
+- [答辩演示](docs/答辩演示.pptx)
 
 ## 测试
 
@@ -219,11 +222,16 @@ dotnet test --collect:"XPlat Code Coverage"
 ```
 
 测试覆盖预算边界、预算超限二次规划、每日费用明细、输入校验、离线 Agent
-工具选择顺序、本地知识库查询、中文 JSON 持久化与迁移，以及 MCP 工具发现
-和共享注册表调用。
+工具选择顺序、本地知识库查询、中文 JSON 持久化与迁移、修订上下文持久化、
+`.env` 配置读取、`.log` 文件写入，以及 MCP 工具发现和共享注册表调用。
+
+当前测试套件共 23 个测试用例，覆盖主要确定性逻辑，不依赖外网 API。
 
 ## 已知边界
 
 - 本地知识库不是实时 API，真实出行前需要二次核验。
+- 本地知识库覆盖范围有限，只作为离线兜底回退性资料，不应视为完整旅游数据库。
 - 在线模式输出受模型稳定性与账户额度影响，因此保留离线模式。
 - 当前长期记忆为单机 JSON 文件，适合课程项目；生产环境应换成数据库并增加用户认证。
+- 修改行程目前采用整轮 Agent 重跑，而不是局部差量编辑；这种方式更稳，但耗时和模型调用成本更高。
+- 当前未实现完整向量 RAG。由于旅游资料多为网页，项目现阶段采用 MCP 工具和联网检索作为更契合的扩展方向。
