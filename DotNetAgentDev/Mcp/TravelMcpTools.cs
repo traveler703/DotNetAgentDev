@@ -165,7 +165,7 @@ public static class TravelMcpTools
         Destructive = false,
         Idempotent = true,
         OpenWorld = false)]
-    [Description("读取本项目保存的用户长期旅行偏好、常去目的地和历史日均预算。当前输入始终优先于历史记忆。")]
+    [Description("读取本项目保存的用户历史旅行节奏、偏好、备注约束和历史日均预算。当前输入始终优先于历史记忆。")]
     public static Task<string> PreferenceMemoryAsync(
         ToolRegistry registry,
         [Description("用户标识；演示时可使用 demo-user。")] string userId,

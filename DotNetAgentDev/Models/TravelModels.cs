@@ -26,6 +26,16 @@ public sealed record TravelRequest
     public string Preferences { get; init; } = string.Empty;
     public TravelPace Pace { get; init; } = TravelPace.Balanced;
     public string Notes { get; init; } = string.Empty;
+    public Guid? PreviousPlanId { get; init; }
+    public int RevisionNumber { get; init; }
+    public string RevisionInstruction { get; init; } = string.Empty;
+    public string PreviousPlanSummary { get; init; } = string.Empty;
+}
+
+public sealed record TravelPlanRevisionRequest
+{
+    [Required]
+    public string Instruction { get; init; } = string.Empty;
 }
 
 public sealed record TravelPlan
@@ -194,13 +204,16 @@ public sealed record AgentContribution(
     string Summary,
     int ToolCallCount);
 
-public sealed record UserMemoryProfile(
-    string UserId,
-    IReadOnlyList<string> Preferences,
-    IReadOnlyList<string> FrequentDestinations,
-    decimal? AverageBudgetPerDay,
-    int PlanCount,
-    DateTimeOffset UpdatedAt);
+public sealed record UserMemoryProfile
+{
+    public string UserId { get; init; } = string.Empty;
+    public IReadOnlyList<string> TravelPaces { get; init; } = [];
+    public IReadOnlyList<string> Preferences { get; init; } = [];
+    public IReadOnlyList<string> Notes { get; init; } = [];
+    public decimal? AverageBudgetPerDay { get; init; }
+    public int PlanCount { get; init; }
+    public DateTimeOffset UpdatedAt { get; init; } = DateTimeOffset.UtcNow;
+}
 
 public static class TravelRequestValidator
 {

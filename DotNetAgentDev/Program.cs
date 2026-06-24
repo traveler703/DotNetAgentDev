@@ -11,6 +11,8 @@ using DotNetAgentDev.Tools;
 using Microsoft.AspNetCore.Http.Features;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Logging.AddProvider(new FileLoggerProvider(
+    Path.Combine(builder.Environment.ContentRootPath, "App_Data", "logs")));
 
 var dotEnvPath = DotEnvConfiguration.FindFile(
     builder.Environment.ContentRootPath,
@@ -149,54 +151,43 @@ app.MapPost("/api/plans/stream", async (
         return;
     }
 
-    response.StatusCode = StatusCodes.Status200OK;
-    response.ContentType = "text/event-stream; charset=utf-8";
-    response.Headers.CacheControl = "no-cache, no-transform";
-    response.Headers.Append("X-Accel-Buffering", "no");
-    response.HttpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
-
-    await response.StartAsync(cancellationToken);
-    await response.WriteAsync($": connected {new string(' ', 2048)}\n\n", cancellationToken);
-    await WriteStreamEventAsync(
+    await WritePlanningStreamAsync(
         response,
-        new PlanningStreamEvent
-        {
-            Type = "connected",
-            Agent = "系统",
-            Phase = "Connected",
-            Title = "SSE 流式连接已建立",
-            Detail = "服务器已关闭响应缓冲，正在启动多 Agent 协作。",
-            Percent = 1
-        },
         streamJsonOptions,
+        (token, emit) => service.CreatePlanAsync(request, token, emit),
         cancellationToken);
+});
 
-    var channel = Channel.CreateUnbounded<PlanningStreamEvent>(
-        new UnboundedChannelOptions
-        {
-            SingleReader = true,
-            SingleWriter = false
-        });
-    var producer = ProducePlanEventsAsync(
-        request,
-        service,
-        channel.Writer,
-        cancellationToken);
-    var heartbeat = ProduceHeartbeatEventsAsync(
-        channel.Writer,
-        producer,
-        cancellationToken);
-
-    await foreach (var streamEvent in channel.Reader.ReadAllAsync(cancellationToken))
+app.MapPost("/api/plans/{id:guid}/revise/stream", async (
+    Guid id,
+    TravelPlanRevisionRequest revision,
+    TravelPlanningService service,
+    PlanningMemoryStore memory,
+    HttpResponse response,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(revision.Instruction))
     {
-        await WriteStreamEventAsync(
-            response,
-            streamEvent,
-            streamJsonOptions,
+        response.StatusCode = StatusCodes.Status400BadRequest;
+        await response.WriteAsJsonAsync(
+            new { errors = new { instruction = new[] { "请填写本次修改要求。" } } },
             cancellationToken);
+        return;
     }
 
-    await Task.WhenAll(producer, heartbeat);
+    var previousPlan = await memory.GetPlanAsync(id, cancellationToken);
+    if (previousPlan is null)
+    {
+        response.StatusCode = StatusCodes.Status404NotFound;
+        await response.WriteAsJsonAsync(new { error = "未找到要修改的旅行计划。" }, cancellationToken);
+        return;
+    }
+
+    await WritePlanningStreamAsync(
+        response,
+        streamJsonOptions,
+        (token, emit) => service.RevisePlanAsync(previousPlan, revision.Instruction, token, emit),
+        cancellationToken);
 });
 
 app.MapGet("/api/plans", async (
@@ -230,16 +221,69 @@ app.MapMcp("/mcp");
 app.MapFallbackToFile("index.html");
 app.Run();
 
+static async Task WritePlanningStreamAsync(
+    HttpResponse response,
+    JsonSerializerOptions jsonOptions,
+    Func<CancellationToken, Action<PlanningStreamEvent>?, Task<TravelPlan>> planFactory,
+    CancellationToken cancellationToken)
+{
+    response.StatusCode = StatusCodes.Status200OK;
+    response.ContentType = "text/event-stream; charset=utf-8";
+    response.Headers.CacheControl = "no-cache, no-transform";
+    response.Headers.Append("X-Accel-Buffering", "no");
+    response.HttpContext.Features.Get<IHttpResponseBodyFeature>()?.DisableBuffering();
+
+    await response.StartAsync(cancellationToken);
+    await response.WriteAsync($": connected {new string(' ', 2048)}\n\n", cancellationToken);
+    await WriteStreamEventAsync(
+        response,
+        new PlanningStreamEvent
+        {
+            Type = "connected",
+            Agent = "系统",
+            Phase = "Connected",
+            Title = "SSE 流式连接已建立",
+            Detail = "服务器已关闭响应缓冲，正在启动多 Agent 协作。",
+            Percent = 1
+        },
+        jsonOptions,
+        cancellationToken);
+
+    var channel = Channel.CreateUnbounded<PlanningStreamEvent>(
+        new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = false
+        });
+    var producer = ProducePlanEventsAsync(
+        planFactory,
+        channel.Writer,
+        cancellationToken);
+    var heartbeat = ProduceHeartbeatEventsAsync(
+        channel.Writer,
+        producer,
+        cancellationToken);
+
+    await foreach (var streamEvent in channel.Reader.ReadAllAsync(cancellationToken))
+    {
+        await WriteStreamEventAsync(
+            response,
+            streamEvent,
+            jsonOptions,
+            cancellationToken);
+    }
+
+    await Task.WhenAll(producer, heartbeat);
+}
+
 static async Task ProducePlanEventsAsync(
-    TravelRequest request,
-    TravelPlanningService service,
+    Func<CancellationToken, Action<PlanningStreamEvent>?, Task<TravelPlan>> planFactory,
     ChannelWriter<PlanningStreamEvent> writer,
     CancellationToken cancellationToken)
 {
     try
     {
-        var plan = await service.CreatePlanAsync(
-            request,
+        var plan = await planFactory(
             cancellationToken,
             streamEvent => writer.TryWrite(streamEvent));
         writer.TryWrite(new PlanningStreamEvent

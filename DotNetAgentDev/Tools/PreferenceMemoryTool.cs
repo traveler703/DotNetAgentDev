@@ -7,7 +7,7 @@ public sealed class PreferenceMemoryTool(PlanningMemoryStore memory) : IAgentToo
 {
     public ToolDefinition Definition { get; } = new(
         "preference_memory",
-        "读取用户长期记忆中的历史偏好、常去目的地和日均预算。",
+        "读取用户长期记忆中的历史旅行节奏、偏好、备注约束和日均预算。",
         ToolSupport.Schema("""
                            {
                              "type": "object",

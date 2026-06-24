@@ -62,6 +62,7 @@ function bindEvents() {
         state.selectedBudgetCategory = budgetItem.dataset.budgetCategory;
         renderActiveTab();
     });
+    elements.resultContent.addEventListener("submit", revisePlan);
     elements.historyButton.addEventListener("click", openHistory);
     elements.closeHistory.addEventListener("click", closeHistory);
     elements.drawerBackdrop.addEventListener("click", closeHistory);
@@ -162,6 +163,73 @@ async function createPlan(event) {
     }
 }
 
+async function revisePlan(event) {
+    const form = event.target.closest("#revisionForm");
+    if (!form) return;
+    event.preventDefault();
+    hideError();
+
+    if (!state.plan?.id) {
+        showError("请先生成或打开一份旅行计划，再进行后续修改。");
+        return;
+    }
+
+    const formData = new FormData(form);
+    const instruction = String(formData.get("instruction") || "").trim();
+    const inlineError = form.querySelector("[data-revision-error]");
+    if (!instruction) {
+        inlineError.textContent = "请写下希望 Agent 团队修改的内容。";
+        inlineError.hidden = false;
+        return;
+    }
+    inlineError.hidden = true;
+
+    const requestForOverlay = {
+        ...state.plan.request,
+        previousPlanId: state.plan.id,
+        revisionInstruction: instruction
+    };
+    setPlanning(true, requestForOverlay);
+    const controller = new AbortController();
+    state.streamAbortController = controller;
+    const connectionTimeout = window.setTimeout(() => {
+        controller.abort(new Error("连接 Agent 流式服务超时，请确认服务正在运行后重试。"));
+    }, 15000);
+
+    try {
+        const response = await fetch(`/api/plans/${encodeURIComponent(state.plan.id)}/revise/stream`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream"
+            },
+            body: JSON.stringify({ instruction }),
+            signal: controller.signal
+        });
+        window.clearTimeout(connectionTimeout);
+        if (!response.ok) {
+            throw new Error(await readError(response));
+        }
+        state.streamConnected = true;
+        elements.streamConnectionState.textContent = "SSE 已连接";
+        state.plan = await consumePlanningStream(response, controller);
+        state.activeTab = "trace";
+        state.selectedBudgetCategory = "transport";
+        renderPlan();
+        await Promise.all([loadHistory(), loadMemory()]);
+        elements.workspace.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (error) {
+        const message = controller.signal.aborted
+            ? controller.signal.reason?.message || "流式连接已中止，请稍后重试。"
+            : error.message || "修改方案失败，请稍后重试。";
+        showError(message);
+    } finally {
+        window.clearTimeout(connectionTimeout);
+        state.streamAbortController = null;
+        setPlanning(false);
+    }
+}
+
 function setPlanning(active, request = null) {
     elements.submitButton.disabled = active;
     elements.overlay.hidden = !active;
@@ -181,12 +249,7 @@ function setPlanning(active, request = null) {
     elements.streamProgressBar.style.width = "1%";
     elements.streamConversation.replaceChildren();
     if (request) {
-        appendUserChatMessage(
-            elements.streamConversation,
-            `请规划从${request.departure}前往${request.destination}的${request.days}天旅行，`
-            + `${request.travelers}人，总预算${money(request.budget)}。`
-            + `${request.preferences ? `偏好：${request.preferences}。` : ""}`
-            + `${request.notes ? `补充要求：${request.notes}。` : ""}`);
+        appendUserChatMessage(elements.streamConversation, userRequestText(request));
     }
 }
 
@@ -547,6 +610,7 @@ function renderTrace() {
                 ${renderUserRequestMessage(plan.request)}
                 ${plan.trace.map(renderTraceChatEntry).join("")}
             </div>
+            ${renderRevisionComposer(plan)}
         </div>
     `;
 }
@@ -639,11 +703,41 @@ function appendToolChatMessage(container, streamEvent) {
 }
 
 function renderUserRequestMessage(request) {
-    const detail = `请规划从${request.departure}前往${request.destination}的${request.days}天旅行，`
+    const detail = userRequestText(request);
+    return `<article class="user-chat-message"><span>你</span><p>${escapeHtml(detail)}</p></article>`;
+}
+
+function renderRevisionComposer(plan) {
+    return `
+        <form id="revisionForm" class="revision-composer">
+            <div>
+                <p class="card-kicker">PLAN REVISION</p>
+                <h3>继续修改这份旅行计划</h3>
+                <p>可以要求增加或删除景点、调整某个景点到第几天上午/下午/晚上，或压缩某类费用。</p>
+            </div>
+            <label for="revisionInstruction">本次修改要求</label>
+            <textarea id="revisionInstruction" name="instruction" rows="3"
+                placeholder="例如：把滨海湾花园改到第 2 天晚上，删除购物中心，增加一次当地小吃街体验。"></textarea>
+            <p class="inline-error" data-revision-error hidden></p>
+            <footer>
+                <span>将基于当前方案 ${escapeHtml(plan.id.slice(0, 8))} 重新运行 Agent 团队并保存新版本。</span>
+                <button type="submit">重新运行 Agent 团队</button>
+            </footer>
+        </form>
+    `;
+}
+
+function userRequestText(request) {
+    if (request.revisionInstruction) {
+        return `请基于上一版旅行计划进行修改：${request.revisionInstruction}。`
+            + ` 原始需求为从${request.departure}前往${request.destination}的${request.days}天旅行，`
+            + `${request.travelers}人，总预算${money(request.budget)}。`;
+    }
+
+    return `请规划从${request.departure}前往${request.destination}的${request.days}天旅行，`
         + `${request.travelers}人，总预算${money(request.budget)}。`
         + `${request.preferences ? `偏好：${request.preferences}。` : ""}`
         + `${request.notes ? `补充要求：${request.notes}。` : ""}`;
-    return `<article class="user-chat-message"><span>你</span><p>${escapeHtml(detail)}</p></article>`;
 }
 
 function renderTraceChatEntry(step) {
@@ -799,9 +893,21 @@ async function loadMemory() {
         const preferences = profile.preferences?.length
             ? profile.preferences
             : ["等待首次规划"];
+        const paces = profile.travelPaces?.length
+            ? profile.travelPaces
+            : [];
+        const notes = profile.notes?.length
+            ? profile.notes
+            : [];
         elements.memoryProfile.innerHTML = `
             <h3>用户偏好记忆 · ${profile.planCount} 份方案</h3>
             <div class="memory-chips">${preferences.map(item => `<span>${escapeHtml(item)}</span>`).join("")}</div>
+            ${paces.length
+                ? `<p class="memory-label">历史节奏</p><div class="memory-chips">${paces.map(item => `<span>${escapeHtml(item)}</span>`).join("")}</div>`
+                : ""}
+            ${notes.length
+                ? `<p class="memory-label">备注与约束</p><div class="memory-notes">${notes.map(item => `<span>${escapeHtml(item)}</span>`).join("")}</div>`
+                : ""}
             ${profile.averageBudgetPerDay
                 ? `<p class="subtle">历史日均预算 ${money(profile.averageBudgetPerDay)}</p>`
                 : ""}

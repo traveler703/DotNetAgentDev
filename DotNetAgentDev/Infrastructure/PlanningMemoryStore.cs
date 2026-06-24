@@ -228,7 +228,7 @@ public sealed class PlanningMemoryStore
         var profiles = await ReadProfilesAsync(cancellationToken);
         return profiles.TryGetValue(userId, out var profile)
             ? profile
-            : new UserMemoryProfile(userId, [], [], null, 0, DateTimeOffset.UtcNow);
+            : new UserMemoryProfile { UserId = userId };
     }
 
     private async Task UpdateProfileUnsafeAsync(TravelPlan plan, CancellationToken cancellationToken)
@@ -241,12 +241,15 @@ public sealed class PlanningMemoryStore
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(12)
             .ToList();
-        var destinations = (existing?.FrequentDestinations ?? [])
-            .Append(plan.Request.Destination)
-            .GroupBy(value => value, StringComparer.OrdinalIgnoreCase)
-            .OrderByDescending(group => group.Count())
-            .Select(group => group.Key)
+        var travelPaces = (existing?.TravelPaces ?? [])
+            .Append(PaceText(plan.Request.Pace))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(8)
+            .ToList();
+        var notes = (existing?.Notes ?? [])
+            .Concat(ParseNotes(plan.Request.Notes))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(12)
             .ToList();
         var newCount = (existing?.PlanCount ?? 0) + 1;
         var currentDailyBudget = plan.Request.Budget / plan.Request.Days;
@@ -254,13 +257,16 @@ public sealed class PlanningMemoryStore
             ? currentDailyBudget
             : ((existing.AverageBudgetPerDay.Value * (newCount - 1)) + currentDailyBudget) / newCount;
 
-        profiles[plan.Request.UserId] = new UserMemoryProfile(
-            plan.Request.UserId,
-            preferences,
-            destinations,
-            decimal.Round(average, 2),
-            newCount,
-            DateTimeOffset.UtcNow);
+        profiles[plan.Request.UserId] = new UserMemoryProfile
+        {
+            UserId = plan.Request.UserId,
+            TravelPaces = travelPaces,
+            Preferences = preferences,
+            Notes = notes,
+            AverageBudgetPerDay = decimal.Round(average, 2),
+            PlanCount = newCount,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
 
         Directory.CreateDirectory(Path.GetDirectoryName(_profilesPath)!);
         await using var stream = File.Create(_profilesPath);
@@ -297,4 +303,17 @@ public sealed class PlanningMemoryStore
         value.Split(['、', ',', '，', '/', ';', '；'], StringSplitOptions.RemoveEmptyEntries)
             .Select(item => item.Trim())
             .Where(item => item.Length > 0);
+
+    private static IEnumerable<string> ParseNotes(string value)
+    {
+        var trimmed = value.Trim();
+        return string.IsNullOrWhiteSpace(trimmed) ? [] : [trimmed];
+    }
+
+    private static string PaceText(TravelPace pace) => pace switch
+    {
+        TravelPace.Relaxed => "轻松",
+        TravelPace.Intensive => "充实",
+        _ => "均衡"
+    };
 }
